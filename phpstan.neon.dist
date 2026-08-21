@@ -1,0 +1,11 @@
+parameters:
+    level: 6
+    paths:
+        - src
+        - tests/Fixtures
+    stubFiles:
+        - phpstan-stubs/eloquent-generics.stub
+    tmpDir: .phpstan.cache
+    treatPhpDocTypesAsCertain: false
+    parallel:
+        maximumNumberOfProcesses: 1

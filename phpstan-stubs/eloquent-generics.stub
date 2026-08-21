@@ -1,0 +1,54 @@
+<?php
+
+namespace Illuminate\Database\Eloquent;
+
+/**
+ * @template TModel
+ * @method $this orderBy(string $column, string $direction = 'asc')
+ * @method $this whereIn(string $column, mixed $values)
+ * @method $this orWhereIn(string $column, mixed $values)
+ * @method $this whereRaw(string $sql, array<mixed> $bindings = [], string $boolean = 'and')
+ * @method bool exists()
+ */
+class Builder
+{
+}
+
+namespace Illuminate\Database\Eloquent\Factories;
+
+/** @template TModel */
+abstract class Factory
+{
+}
+
+/** @template TFactory of Factory */
+trait HasFactory
+{
+}
+
+namespace Illuminate\Database\Eloquent\Relations;
+
+/**
+ * @template TRelatedModel
+ * @template TDeclaringModel
+ */
+class BelongsTo
+{
+}
+
+/**
+ * @template TRelatedModel
+ * @template TDeclaringModel
+ * @template TPivotModel
+ */
+class BelongsToMany
+{
+}
+
+/**
+ * @template TRelatedModel
+ * @template TDeclaringModel
+ */
+class HasMany
+{
+}
