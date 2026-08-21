@@ -389,12 +389,14 @@ Kinship throws early for:
 
 ## Supported versions and verification
 
-Production constraints support PHP 8.2+ and Laravel 9–12. The GitHub Actions matrix tests:
+Production constraints support PHP 8.2+ and Laravel 9–13. Individual Laravel
+versions may require a newer PHP runtime. The GitHub Actions matrix tests:
 
 - PHP 8.2 / Laravel 9 / Testbench 7 / PHPUnit 9;
 - PHP 8.2 / Laravel 10 / Testbench 8 / PHPUnit 10;
 - PHP 8.3 / Laravel 11 / Testbench 9 / PHPUnit 11;
-- PHP 8.4 / Laravel 12 / Testbench 10 / PHPUnit 11.
+- PHP 8.4 / Laravel 12 / Testbench 10 / PHPUnit 11;
+- PHP 8.4 / Laravel 13 / Testbench 11 / PHPUnit 12.
 
 Quality gates:
 

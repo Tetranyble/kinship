@@ -7,6 +7,12 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## [1.1.0] - 2026-08-21
+
+### Added
+
+- Laravel 13 compatibility with Testbench 11 and PHPUnit 12 coverage.
+
 ## [1.0.0] - 2026-08-21
 
 ### Added

@@ -1,6 +1,6 @@
 # Kinship
 
-Kinship is a guard-aware role and permission package for Laravel 9–12 on PHP 8.2 or newer. Workspace authorization is optional: ordinary applications only add the user concern, while workspace applications can opt in with a small model contract, configuration mapping, or a custom resolver.
+Kinship is a guard-aware role and permission package for Laravel 9–13 on PHP 8.2 or newer. Workspace authorization is optional: ordinary applications only add the user concern, while workspace applications can opt in with a small model contract, configuration mapping, or a custom resolver.
 
 ## Design guarantees
 
@@ -368,7 +368,7 @@ composer format
 composer check
 ```
 
-The CI matrix covers Laravel 9/Testbench 7 through Laravel 12/Testbench 10. Laravel 9 is supported for compatibility, but it is upstream end-of-life; applications must assess unresolved framework advisories and plan an upgrade.
+The CI matrix covers Laravel 9/Testbench 7 through Laravel 13/Testbench 11. Laravel 9 is supported for compatibility, but it is upstream end-of-life; applications must assess unresolved framework advisories and plan an upgrade.
 
 ## License
 
