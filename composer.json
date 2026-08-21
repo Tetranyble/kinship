@@ -1,0 +1,83 @@
+{
+    "name": "tetranyble/kinship",
+    "description": "Guard-aware, workspace-aware roles and permissions for Laravel applications.",
+    "keywords": [
+        "authorization",
+        "laravel",
+        "permissions",
+        "rbac",
+        "roles"
+    ],
+    "type": "library",
+    "license": "MIT",
+    "homepage": "https://github.com/Tetranyble/kinship",
+    "support": {
+        "issues": "https://github.com/Tetranyble/kinship/issues",
+        "source": "https://github.com/Tetranyble/kinship"
+    },
+    "require": {
+        "php": "^8.2",
+        "illuminate/auth": "^9.0 || ^10.0 || ^11.0 || ^12.0",
+        "illuminate/contracts": "^9.0 || ^10.0 || ^11.0 || ^12.0",
+        "illuminate/database": "^9.0 || ^10.0 || ^11.0 || ^12.0",
+        "illuminate/http": "^9.0 || ^10.0 || ^11.0 || ^12.0",
+        "illuminate/routing": "^9.0 || ^10.0 || ^11.0 || ^12.0",
+        "illuminate/session": "^9.0 || ^10.0 || ^11.0 || ^12.0",
+        "illuminate/support": "^9.0 || ^10.0 || ^11.0 || ^12.0"
+    },
+    "require-dev": {
+        "laravel/pint": "^1.18",
+        "mockery/mockery": "^1.6",
+        "orchestra/testbench": "^7.0 || ^8.0 || ^9.0 || ^10.0",
+        "phpstan/phpstan": "^2.2",
+        "phpunit/phpunit": "^9.5 || ^10.0 || ^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Tetranyble\\Kinship\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tetranyble\\Kinship\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "@php vendor/bin/phpunit",
+        "analyse": "@php vendor/bin/phpstan analyse --configuration=phpstan.neon.dist --no-progress --debug",
+        "format": "@php vendor/bin/pint --test",
+        "check": [
+            "@composer validate --strict",
+            "@format",
+            "@analyse",
+            "@test"
+        ]
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Tetranyble\\Kinship\\KinshipServiceProvider"
+            ]
+        }
+    },
+    "archive": {
+        "exclude": [
+            "/.github",
+            "/.gitattributes",
+            "/.gitignore",
+            "/.idea",
+            "/.phpstan.cache",
+            "/.phpunit.cache",
+            "/.phpunit.result.cache",
+            "/.valetrc",
+            "/composer.lock",
+            "/phpstan-stubs",
+            "/phpstan.neon.dist",
+            "/phpunit.xml",
+            "/tests",
+            "/vendor"
+        ]
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
