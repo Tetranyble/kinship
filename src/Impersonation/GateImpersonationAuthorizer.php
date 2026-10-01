@@ -11,7 +11,7 @@ final class GateImpersonationAuthorizer implements ImpersonationAuthorizer
 {
     public function __construct(private readonly Gate $gate) {}
 
-    public function authorize(Authenticatable $actor, Authenticatable $target, string $guard): bool
+    public function authorize(Authenticatable $actor, Authenticatable $target): bool
     {
         $ability = config('kinship.impersonation.ability', 'kinship.impersonate');
 
@@ -19,6 +19,6 @@ final class GateImpersonationAuthorizer implements ImpersonationAuthorizer
             throw new RuntimeException('Kinship impersonation ability must be a non-empty string.');
         }
 
-        return $this->gate->forUser($actor)->allows($ability, [$target, $guard]);
+        return $this->gate->forUser($actor)->allows($ability, $target);
     }
 }

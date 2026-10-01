@@ -43,11 +43,10 @@ class ImpersonationTest extends PackageTestCase
         parent::setUp();
         $this->startSession();
 
-        Gate::define('kinship.impersonate', function (User $actor, User $target, string $guard): bool {
+        Gate::define('kinship.impersonate', function (User $actor, User $target): bool {
             return $actor->name === 'Support'
                 && $actor->mfa_verified_at !== null
-                && $target->locked_at !== null
-                && in_array($guard, ['web', 'api'], true);
+                && $target->locked_at !== null;
         });
 
         Route::middleware(['web', 'kinship.impersonation.valid'])

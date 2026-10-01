@@ -41,29 +41,27 @@ class ModelWorkspaceResolver implements WorkspaceResolver
 
         if ($this->configuration->mapping !== null) {
             $mapping = $this->configuration->mapping;
-            $subjectForeignKey = $mapping->subjectForeignKey;
-            $relationship = $mapping->relationship;
-            $workspaceModel = $mapping->model;
-            $workspaceOwnerKey = $mapping->workspaceOwnerKey;
-            $value = $subject->getAttribute($subjectForeignKey);
+            $value = $subject->getAttribute($mapping->subjectForeignKey);
 
             if (is_int($value) || is_string($value)) {
                 return $value;
             }
 
-            $workspace = $subject->getRelationValue($relationship);
+            if ($mapping->relationship === null) {
+                return null;
+            }
+
+            $workspace = $subject->getRelationValue($mapping->relationship);
 
             if ($workspace === null) {
                 return null;
             }
 
-            if (! $workspace instanceof $workspaceModel) {
-                throw new RuntimeException("The mapped Kinship workspace relationship [{$relationship}] returned an invalid model.");
+            if (! $workspace instanceof $mapping->model || ! $workspace instanceof Workspace) {
+                throw new RuntimeException("The mapped Kinship workspace relationship [{$mapping->relationship}] returned an invalid model.");
             }
 
-            $value = $workspace->getAttribute($workspaceOwnerKey);
-
-            return is_int($value) || is_string($value) ? $value : null;
+            return $workspace->getWorkspaceIdentifier();
         }
 
         $value = $subject->getAttribute($this->configuration->subjectForeignKey());

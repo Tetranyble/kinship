@@ -15,12 +15,11 @@ final class ModelAuthorizationContextResolver implements AuthorizationContextRes
         private readonly WorkspaceConfiguration $configuration,
     ) {}
 
-    public function resolve(Model $subject, string $guard): AuthorizationContext
+    public function resolve(Model $subject): AuthorizationContext
     {
         $workspaceEnabled = $this->configuration->enabledFor($subject);
 
         return new AuthorizationContext(
-            $guard,
             $workspaceEnabled,
             $workspaceEnabled ? $this->workspaces->resolve($subject) : null,
         );

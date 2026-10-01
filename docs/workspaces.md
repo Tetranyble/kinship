@@ -1,6 +1,6 @@
 # Workspace integration
 
-Workspace authorization is an optional capability layered over Kinship's guard-aware RBAC core. A non-workspace application uses the same package, tables, and APIs without implementing any workspace type.
+Workspace authorization is an optional capability layered over Kinship's RBAC core. A non-workspace application uses the same package, tables, and APIs without implementing any workspace type.
 
 ## Activation rules
 
@@ -10,7 +10,7 @@ Workspace authorization is an optional capability layered over Kinship's guard-a
 | --- | --- |
 | `false` | Force global authorization, even if models implement workspace contracts |
 | `true` | Force workspace authorization; normally paired with a custom resolver or mapping |
-| `null` | Enable for a `WorkspaceSubject`, a configured user model implementing that contract, or a complete mapping |
+| `null` | Enable for a `WorkspaceSubject`, a configured user model implementing that contract, or a mapping override |
 
 The database shape never depends on this decision. The roles table always has a non-null string scope column. Global applications use the configured sentinel; workspace applications store a canonical string representation of their integer, UUID, ULID, or string identifier.
 
@@ -41,6 +41,16 @@ interface WorkspaceSubject
 
 Neither contract requires an Eloquent relationship. This allows domain-selected workspaces, session state, subdomain context, aggregate roots, and custom persistence arrangements without pretending every application has the same relationship topology.
 
+The host tenant model is configured once at `kinship.models.workspace`:
+
+```php
+'models' => [
+    'workspace' => App\Models\Workspace::class,
+],
+```
+
+Kinship does not ship or own a workspace table/model. The host `Workspace` model must extend Eloquent `Model` and implement the workspace contract. `IsWorkspace` is an optional convenience trait, not a base class requirement.
+
 An active workspace subject returning `null` fails closed: role queries intentionally return no results. Global roles are not an implicit fallback.
 
 ## Direct foreign-key integration
@@ -49,17 +59,15 @@ For the conventional user-belongs-to-workspace design:
 
 ```php
 // config/kinship.php
+'models' => [
+    'workspace' => App\Models\Workspace::class,
+],
+
 'workspace' => [
     'enabled' => null,
     'subject_foreign_key' => 'workspace_id',
     'role_foreign_key' => 'workspace_id',
-    'mapping' => [
-        'model' => App\Models\Workspace::class,
-        'relationship' => 'workspace',
-        'subject_foreign_key' => 'workspace_id',
-        'workspace_owner_key' => 'id',
-        'role_foreign_key' => 'workspace_id',
-    ],
+    'group_foreign_key' => 'workspace_id',
 ],
 ```
 
@@ -81,7 +89,7 @@ class User extends Authenticatable implements WorkspaceSubject
 - `kinshipWorkspace()` as a `BelongsTo` relation;
 - relationship fallback when the foreign key is absent but a workspace model is loaded.
 
-The configured model must implement the workspace marker:
+The configured `models.workspace` model must implement the workspace marker:
 
 ```php
 use Tetranyble\Kinship\Concerns\IsWorkspace;
@@ -93,7 +101,9 @@ class Workspace extends Model implements WorkspaceContract
 }
 ```
 
-`IsWorkspace` supplies the identifier and optional `kinshipUsers()` and `kinshipRoles()` inverse relationships.
+`IsWorkspace` supplies the identifier and optional `kinshipUsers()`, `kinshipRoles()`, and `kinshipGroups()` inverse relationships.
+
+The contract does not require a literal `id` or `workspace_id` field. A host model may use UUID/ULID/string owner keys and may implement `getWorkspaceIdentifier()` directly. `kinship.models.workspace` is authoritative; a stale or legacy `workspace.mapping.model` entry is ignored rather than creating a second model source of truth.
 
 ## Manual contract implementation
 
@@ -106,12 +116,12 @@ class User extends Authenticatable implements WorkspaceSubject
 
     public function workspace(): BelongsTo
     {
-        return $this->belongsTo(Organization::class);
+        return $this->belongsTo(Workspace::class);
     }
 
     public function getWorkspaceIdentifier(): int|string|null
     {
-        return $this->organization_id;
+        return $this->workspace_id;
     }
 }
 ```
@@ -123,23 +133,29 @@ The method may return the currently selected membership workspace instead of a p
 If the host user model cannot implement package contracts, supply all mapping fields:
 
 ```php
-'mapping' => [
-    'model' => App\Models\Organization::class,
-    'relationship' => 'organization',
-    'subject_foreign_key' => 'organization_uuid',
-    'workspace_owner_key' => 'uuid',
-    'role_foreign_key' => 'organization_uuid',
+'models' => [
+    'workspace' => App\Models\Workspace::class,
+],
+
+'workspace' => [
+    'mapping' => [
+        'relationship' => 'workspace',
+        'subject_foreign_key' => 'tenant_uuid',
+        'workspace_owner_key' => 'uuid',
+        'role_foreign_key' => 'tenant_role_uuid',
+        'group_foreign_key' => 'tenant_group_uuid',
+    ],
 ],
 ```
 
 Resolution order is:
 
-1. Read `organization_uuid` from the subject.
-2. If absent, resolve the `organization` relationship.
-3. Validate that the related object is the configured model.
-4. Read its `uuid` owner key.
+1. Read `tenant_uuid` from the subject.
+2. If absent, resolve the configured `workspace` relationship.
+3. Validate that the related object is the configured `models.workspace` model and implements the workspace contract.
+4. Read its workspace identifier.
 
-Providing only part of a mapping throws a `RuntimeException`. Kinship never guesses the remaining schema at an authorization boundary.
+Mapping fields are optional overrides. Unspecified foreign keys fall back to the top-level workspace keys, and an unspecified owner key falls back to the configured Workspace model's Eloquent primary key. Role and group scope keys are independent so existing tables may use different physical tenant columns without changing the authorization boundary.
 
 ## Custom resolver strategy
 
@@ -166,7 +182,7 @@ final class DomainWorkspaceResolver implements WorkspaceResolver
 
 The service provider resolves the class through Laravel's container, so constructor dependencies are supported. An application may alternatively bind `WorkspaceResolver::class` before Kinship registers.
 
-For complete context replacement, implement and bind `AuthorizationContextResolver`. It receives the subject and resolved guard and must return an `AuthorizationContext`.
+For complete context replacement, implement and bind `AuthorizationContextResolver`. It receives the subject and must return an `AuthorizationContext`.
 
 ## Identifier rules
 
@@ -188,7 +204,7 @@ This prevents an incomplete workspace login or resolver failure from inheriting 
 
 ## Context switching
 
-Every permission and acting-role cache entry is keyed by guard and workspace fingerprint. Reusing the same user instance after a workspace switch therefore cannot return permissions from the previous workspace.
+Every permission and acting-role cache entry is keyed by subject and workspace fingerprint. Reusing the same user instance after a workspace switch therefore cannot return permissions from the previous workspace.
 
 `roles()` always scopes queries to the current context. `allRoles()` is intentionally unscoped and exists for persistence/administrative tooling. Never use `allRoles()` to make an authorization decision.
 
@@ -202,7 +218,7 @@ Kinship's own authorization methods query their scoped relationships and do not 
 
 ## Direct permissions
 
-Permission definitions are guard-scoped and global. A permission attached directly to a user applies in every workspace under the same guard. This is useful for account-level capabilities.
+Permission definitions are global and unique by name. Direct user permissions are stored with the current workspace scope, so they do not cross workspace boundaries.
 
 For workspace-varying grants, attach the permission to a workspace-scoped role instead.
 
@@ -214,7 +230,7 @@ When the optional permission catalog is enabled, workspace applications must nam
 php artisan kinship:seed --workspace=workspace-123
 ```
 
-Run the command once for each workspace that needs the starter roles. Permission definitions are guard-global and are reused; each command creates or updates the roles only in the named workspace. Use `--global` only when the application intentionally needs global roles:
+Run the command once for each workspace that needs the starter roles. Permission definitions are global and are reused; each command creates or updates the roles only in the named workspace. Use `--global` only when the application intentionally needs global roles:
 
 ```bash
 php artisan kinship:seed --global

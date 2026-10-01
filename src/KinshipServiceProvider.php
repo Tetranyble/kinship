@@ -6,16 +6,18 @@ use Illuminate\Routing\Router;
 use Illuminate\Support\ServiceProvider;
 use RuntimeException;
 use Tetranyble\Kinship\Cache\LaravelPermissionCacheStore;
+use Tetranyble\Kinship\Cache\PermissionBackedRoleCacheStore;
 use Tetranyble\Kinship\Cache\PermissionCacheInvalidator;
 use Tetranyble\Kinship\Cache\PermissionCacheKeys;
 use Tetranyble\Kinship\Catalog\PermissionCatalogSeeder;
 use Tetranyble\Kinship\Console\SeedPermissionCatalogCommand;
 use Tetranyble\Kinship\Contracts\AuthorizationContextResolver;
-use Tetranyble\Kinship\Contracts\GuardResolver;
+use Tetranyble\Kinship\Contracts\EffectiveRoleResolver;
 use Tetranyble\Kinship\Contracts\ImpersonationAuthorizer;
 use Tetranyble\Kinship\Contracts\PermissionCacheStore;
 use Tetranyble\Kinship\Contracts\PermissionCatalog;
 use Tetranyble\Kinship\Contracts\PermissionNameResolver;
+use Tetranyble\Kinship\Contracts\RoleCacheStore;
 use Tetranyble\Kinship\Contracts\StatelessImpersonationTokenBroker;
 use Tetranyble\Kinship\Contracts\WorkspaceResolver;
 use Tetranyble\Kinship\Http\Middleware\ValidateImpersonationSession;
@@ -23,7 +25,8 @@ use Tetranyble\Kinship\Http\Middleware\ValidateStatelessImpersonation;
 use Tetranyble\Kinship\Impersonation\ImpersonationManager;
 use Tetranyble\Kinship\Permissions\CachedPermissionNameResolver;
 use Tetranyble\Kinship\Permissions\PermissionGrantQuery;
-use Tetranyble\Kinship\Support\ApplicationGuardResolver;
+use Tetranyble\Kinship\Roles\CachedEffectiveRoleResolver;
+use Tetranyble\Kinship\Roles\RoleGrantQuery;
 use Tetranyble\Kinship\Support\WorkspaceConfiguration;
 
 class KinshipServiceProvider extends ServiceProvider
@@ -37,12 +40,12 @@ class KinshipServiceProvider extends ServiceProvider
             fn (): WorkspaceConfiguration => WorkspaceConfiguration::fromConfig(),
         );
 
-        if (! $this->app->bound(GuardResolver::class)) {
-            $this->app->singleton(GuardResolver::class, ApplicationGuardResolver::class);
-        }
-
         if (! $this->app->bound(PermissionCacheStore::class)) {
             $this->app->singleton(PermissionCacheStore::class, LaravelPermissionCacheStore::class);
+        }
+
+        if (! $this->app->bound(RoleCacheStore::class)) {
+            $this->app->singleton(RoleCacheStore::class, PermissionBackedRoleCacheStore::class);
         }
 
         if (! $this->app->bound(ImpersonationAuthorizer::class)) {
@@ -63,9 +66,14 @@ class KinshipServiceProvider extends ServiceProvider
             $this->app->singleton(PermissionNameResolver::class, CachedPermissionNameResolver::class);
         }
 
+        if (! $this->app->bound(EffectiveRoleResolver::class)) {
+            $this->app->singleton(EffectiveRoleResolver::class, CachedEffectiveRoleResolver::class);
+        }
+
         $this->app->singleton(PermissionCacheKeys::class);
         $this->app->singleton(PermissionCacheInvalidator::class);
         $this->app->singleton(PermissionGrantQuery::class);
+        $this->app->singleton(RoleGrantQuery::class);
         $this->app->singleton(ImpersonationManager::class);
 
         if (! $this->app->bound(WorkspaceResolver::class)) {

@@ -1,6 +1,6 @@
 {
     "name": "tetranyble/kinship",
-    "description": "Guard-aware, workspace-aware roles and permissions for Laravel applications.",
+    "description": "Workspace-aware roles and permissions for Laravel applications, independent of authentication strategy.",
     "keywords": [
         "authorization",
         "laravel",

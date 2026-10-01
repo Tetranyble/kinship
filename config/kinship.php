@@ -1,11 +1,13 @@
 <?php
 
+use App\Models\Workspace;
 use Tetranyble\Kinship\Catalog\ConfigPermissionCatalog;
 use Tetranyble\Kinship\Http\Middleware\PermissionMiddleware;
 use Tetranyble\Kinship\Http\Middleware\RoleMiddleware;
 use Tetranyble\Kinship\Http\Middleware\ValidateImpersonationSession;
 use Tetranyble\Kinship\Http\Middleware\ValidateStatelessImpersonation;
 use Tetranyble\Kinship\Impersonation\GateImpersonationAuthorizer;
+use Tetranyble\Kinship\Models\Group;
 use Tetranyble\Kinship\Models\Permission;
 use Tetranyble\Kinship\Models\Role;
 use Tetranyble\Kinship\Permissions\DatabasePermissionGrantSource;
@@ -16,6 +18,10 @@ return [
     'models' => [
         'role' => Role::class,
         'permission' => Permission::class,
+        'group' => Group::class,
+        // Host-owned tenant model. It must implement Contracts\Workspace;
+        // Concerns\IsWorkspace provides the conventional implementation.
+        'workspace' => Workspace::class,
         'user' => null,
     ],
 
@@ -25,34 +31,44 @@ return [
         'role_user' => 'role_user',
         'permission_user' => 'permission_user',
         'permission_role' => 'permission_role',
+        'groups' => 'groups',
+        'group_user' => 'group_user',
+        'group_role' => 'group_role',
+        'group_permission' => 'group_permission',
     ],
 
     'columns' => [
         'role_foreign_key' => 'role_id',
         'permission_foreign_key' => 'permission_id',
         'user_foreign_key' => 'user_id',
+        'group_foreign_key' => 'group_id',
     ],
 
-    // null follows Laravel's runtime-active/default guard. Set a string only
-    // when Kinship needs a package fallback different from the application.
-    'guard' => null,
-
     'workspace' => [
-        // null auto-detects the WorkspaceSubject contract or a complete mapping.
+        // null auto-detects the WorkspaceSubject contract or a mapping override.
         // Set false to force single-workspace mode or true for a custom resolver.
         'enabled' => null,
         'resolver' => ModelWorkspaceResolver::class,
         'context_resolver' => ModelAuthorizationContextResolver::class,
         'subject_foreign_key' => 'workspace_id',
         'role_foreign_key' => 'workspace_id',
+        'group_foreign_key' => 'workspace_id',
         'global_scope_value' => '__kinship_global__',
         'mapping' => [
-            'model' => null,
+            // The model comes from kinship.models.workspace. Only override
+            // relationship/key names here when the host schema is non-standard.
             'relationship' => null,
             'subject_foreign_key' => null,
-            'workspace_owner_key' => 'id',
+            'workspace_owner_key' => null,
             'role_foreign_key' => null,
+            'group_foreign_key' => null,
         ],
+    ],
+
+    'group' => [
+        // Scalar group lookup is optional convenience. Model instances always work.
+        // Existing applications may map this to ['code'], ['slug'], etc.
+        'lookup_columns' => ['name', 'label'],
     ],
 
     'acting_roles' => [

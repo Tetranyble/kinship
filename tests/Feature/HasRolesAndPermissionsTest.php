@@ -18,14 +18,12 @@ class HasRolesAndPermissionsTest extends WorkspacePackageTestCase
         $this->startSession();
     }
 
-    public function test_roles_are_resolved_within_the_users_workspace_and_guard(): void
+    public function test_roles_are_resolved_within_the_users_workspace(): void
     {
         $user = WorkspaceUser::query()->create(['name' => 'Ada', 'email' => 'ada@example.test', 'workspace_id' => 10]);
         $expected = $this->role('admin', workspaceId: 10);
         $otherWorkspace = $this->role('admin', workspaceId: 20);
-        $otherGuard = $this->role('admin', workspaceId: 10, guard: 'api');
-
-        $user->assignRoles('admin', $otherWorkspace->id, $otherGuard->id);
+        $user->assignRoles('admin', $otherWorkspace->id);
 
         $this->assertDatabaseHas('role_user', [
             'user_id' => $user->id,
@@ -147,14 +145,12 @@ class HasRolesAndPermissionsTest extends WorkspacePackageTestCase
         $this->assertFalse($user->hasRole('manager'));
     }
 
-    public function test_permission_can_be_assigned_to_guard_compatible_role_models(): void
+    public function test_permission_can_be_assigned_to_roles_across_workspaces(): void
     {
         $permission = $this->permission('loan.view');
         $first = $this->role('analyst', workspaceId: 10);
         $second = $this->role('manager', workspaceId: 20);
-        $otherGuard = $this->role('api-user', workspaceId: 10, guard: 'api');
-
-        $permission->assignRoles(collect([$first, $second, $otherGuard]));
+        $permission->assignRoles(collect([$first, $second]));
 
         $this->assertEqualsCanonicalizing(
             [$first->id, $second->id],
@@ -196,77 +192,6 @@ class HasRolesAndPermissionsTest extends WorkspacePackageTestCase
 
         $this->assertNull($user->getActingRole());
         $this->assertFalse($user->hasPermission('admin.view'));
-    }
-
-    public function test_permission_cache_is_isolated_when_the_guard_changes(): void
-    {
-        $user = WorkspaceUser::query()->create(['name' => 'Ada', 'email' => 'ada@example.test', 'workspace_id' => 10]);
-        $web = $this->role('web-role', workspaceId: 10);
-        $api = $this->role('api-role', workspaceId: 10, guard: 'api');
-        $web->givePermissionTo($this->permission('web.view'));
-        $api->givePermissionTo($this->permission('api.view', guard: 'api'));
-        $user->allRoles()->syncWithoutDetaching([$web->id, $api->id]);
-
-        $this->assertTrue($user->hasPermission('web.view'));
-        $this->assertFalse($user->hasPermission('api.view'));
-
-        $user->setAttribute('guard_name', 'api');
-
-        $this->assertFalse($user->hasPermission('web.view'));
-        $this->assertTrue($user->hasPermission('api.view'));
-    }
-
-    public function test_null_package_guard_follows_laravels_runtime_active_guard(): void
-    {
-        config([
-            'kinship.guard' => null,
-            'auth.guards.api' => [
-                'driver' => 'session',
-                'provider' => 'users',
-            ],
-        ]);
-        $user = WorkspaceUser::query()->create(['name' => 'Ada', 'email' => 'ada@example.test', 'workspace_id' => 10]);
-        $web = $this->role('web-role', workspaceId: 10);
-        $api = $this->role('api-role', workspaceId: 10, guard: 'api');
-        $web->givePermissionTo($this->permission('dashboard.view'));
-        $api->givePermissionTo($this->permission('dashboard.view', guard: 'api'));
-        $user->allRoles()->sync([$web->id, $api->id]);
-
-        auth()->shouldUse('api');
-
-        $this->assertTrue($user->hasRole('api-role'));
-        $this->assertFalse($user->hasRole('web-role'));
-        $this->assertTrue($user->hasPermission('dashboard.view'));
-        $this->assertSame(['api-role'], $user->roles()->pluck('name')->all());
-
-        auth()->shouldUse('web');
-
-        $this->assertTrue($user->hasRole('web-role'));
-        $this->assertFalse($user->hasRole('api-role'));
-    }
-
-    public function test_role_and_permission_creation_persist_laravels_runtime_active_guard(): void
-    {
-        config([
-            'kinship.guard' => null,
-            'auth.guards.api' => [
-                'driver' => 'session',
-                'provider' => 'users',
-            ],
-        ]);
-        auth()->shouldUse('api');
-
-        $role = Role::query()->create(['name' => 'api-author']);
-        $permission = Permission::query()->create([
-            'name' => 'article.create',
-            'label' => 'Create Article',
-            'group' => 'article',
-        ]);
-
-        $this->assertSame('api', $role->guard_name);
-        $this->assertSame('api', $permission->guard_name);
-        $this->assertDatabaseHas('roles', ['id' => $role->id, 'guard_name' => 'api']);
-        $this->assertDatabaseHas('permissions', ['id' => $permission->id, 'guard_name' => 'api']);
     }
 
     public function test_sync_roles_only_replaces_roles_in_the_current_context(): void
@@ -318,23 +243,21 @@ class HasRolesAndPermissionsTest extends WorkspacePackageTestCase
         $this->assertSame([$second->id], $permission->roles()->pluck('roles.id')->all());
     }
 
-    private function role(string $name, int $workspaceId, string $guard = 'web'): Role
+    private function role(string $name, int $workspaceId): Role
     {
         return Role::query()->create([
             'name' => $name,
             'label' => ucfirst($name),
             'workspace_id' => $workspaceId,
-            'guard_name' => $guard,
         ]);
     }
 
-    private function permission(string $name, string $guard = 'web'): Permission
+    private function permission(string $name): Permission
     {
         return Permission::query()->create([
             'name' => $name,
             'label' => ucfirst($name),
             'group' => str($name)->before('.')->toString(),
-            'guard_name' => $guard,
         ]);
     }
 }

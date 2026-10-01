@@ -2,62 +2,36 @@
 
 namespace Tetranyble\Kinship\Models;
 
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use Illuminate\Database\Eloquent\Relations\Pivot;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Tetranyble\Kinship\Cache\PermissionCacheInvalidator;
-use Tetranyble\Kinship\Contracts\GuardResolver;
+use Tetranyble\Kinship\Contracts\Group as GroupContract;
+use Tetranyble\Kinship\Models\Pivots\GroupPermission;
+use Tetranyble\Kinship\Models\Pivots\PermissionRole;
 use Tetranyble\Kinship\Support\KinshipModels;
+use Tetranyble\Kinship\Support\WorkspaceConfiguration;
 
-/**
- * @property string $guard_name
- * @property string $name
- */
+/** @property string $name */
 class Permission extends Model
 {
     use SoftDeletes;
 
     protected static function booted(): void
     {
-        static::creating(function (Permission $permission): void {
-            if (! is_string($permission->getAttribute('guard_name')) || trim($permission->getAttribute('guard_name')) === '') {
-                $permission->setAttribute('guard_name', app(GuardResolver::class)->resolve());
-            }
-        });
-
-        static::updating(function (Permission $permission): void {
-            $guard = $permission->getOriginal('guard_name');
-            if (is_string($guard) && $guard !== '') {
-                app(PermissionCacheInvalidator::class)->invalidateGuard($guard);
-            }
-        });
-
-        static::saved(function (Permission $permission): void {
-            $permission->invalidateKinshipCache();
-        });
-        static::deleted(function (Permission $permission): void {
-            $permission->invalidateKinshipCache();
-        });
-        static::restored(function (Permission $permission): void {
-            $permission->invalidateKinshipCache();
-        });
+        static::saved(fn (Permission $permission) => $permission->invalidateDefinitions());
+        static::deleted(fn (Permission $permission) => $permission->invalidateDefinitions());
+        static::restored(fn (Permission $permission) => $permission->invalidateDefinitions());
     }
 
-    protected $fillable = [
-        'name',
-        'label',
-        'group',
-        'guard_name',
-    ];
+    protected $fillable = ['name', 'label', 'group'];
 
     public function getTable(): string
     {
         return (string) config('kinship.tables.permissions', parent::getTable());
     }
 
-    /** @return BelongsToMany<Role, $this, Pivot> */
+    /** @return BelongsToMany<Role, $this, PermissionRole> */
     public function roles(): BelongsToMany
     {
         return $this->belongsToMany(
@@ -65,35 +39,39 @@ class Permission extends Model
             (string) config('kinship.tables.permission_role', 'permission_role'),
             (string) config('kinship.columns.permission_foreign_key', 'permission_id'),
             (string) config('kinship.columns.role_foreign_key', 'role_id'),
-        )->withTimestamps();
+        )->using(PermissionRole::class)->withTimestamps();
     }
 
-    /**
-     * Attach roles to this global permission without removing existing roles.
-     *
-     * Role models and collections are accepted for compatibility. Numeric
-     * identifiers are guard-validated before they are attached.
-     *
-     * @return array{attached: list<int|string>, detached: list<int|string>, updated: list<int|string>}
-     */
+    /** @return BelongsToMany<Model&GroupContract, $this, GroupPermission> */
+    public function groups(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            KinshipModels::group(),
+            (string) config('kinship.tables.group_permission', 'group_permission'),
+            (string) config('kinship.columns.permission_foreign_key', 'permission_id'),
+            (string) config('kinship.columns.group_foreign_key', 'group_id'),
+        )->using(GroupPermission::class)->withTimestamps();
+    }
+
+    /** @return array{attached: list<int|string>, detached: list<int|string>, updated: list<int|string>} */
     public function assignRoles(mixed ...$roles): array
     {
-        return $this->roles()->syncWithoutDetaching($this->resolveRoleIds($roles));
+        $ids = $this->resolveRoleIds($roles);
+        $result = $this->roles()->syncWithoutDetaching($ids);
+        $this->invalidateRoleScopes($ids);
+
+        return $result;
     }
 
     /** @return array{attached: list<int|string>, detached: list<int|string>, updated: list<int|string>} */
     public function syncRoles(mixed ...$roles): array
     {
-        return $this->roles()->sync($this->resolveRoleIds($roles));
-    }
+        $before = $this->roles()->pluck($this->roles()->getRelated()->getQualifiedKeyName())->all();
+        $ids = $this->resolveRoleIds($roles);
+        $result = $this->roles()->sync($ids);
+        $this->invalidateRoleScopes(array_values(array_unique([...$before, ...$ids])));
 
-    /**
-     * @param  Builder<Permission>  $query
-     * @return Builder<Permission>
-     */
-    public function scopeForGuard(Builder $query, ?string $guard = null): Builder
-    {
-        return $query->where('guard_name', app(GuardResolver::class)->resolve(requestedGuard: $guard));
+        return $result;
     }
 
     /**
@@ -104,28 +82,65 @@ class Permission extends Model
     {
         $roleClass = KinshipModels::role();
         $values = collect($roles)->flatten();
-        $ids = $values
-            ->filter(fn (mixed $value): bool => $value instanceof $roleClass)
-            ->filter(fn (Role $value): bool => $value->guard_name === $this->guard_name)
-            ->map(fn (Role $value): mixed => $value->getKey());
-        $candidateIds = $values->filter(
-            fn (mixed $value): bool => is_int($value) || is_string($value),
-        );
+        $keyName = (new $roleClass)->getKeyName();
+        $resolved = [];
 
-        return $roleClass::query()
-            ->where('guard_name', $this->guard_name)
-            ->whereKey($candidateIds->all())
-            ->pluck((new $roleClass)->getKeyName())
-            ->merge($ids)
-            ->unique()
-            ->values()
-            ->all();
+        foreach ($values as $value) {
+            if ($value instanceof $roleClass) {
+                if ($value->getKey() !== null) {
+                    $resolved[] = $value->getKey();
+                }
+
+                continue;
+            }
+
+            if (! is_int($value) && ! (is_string($value) && trim($value) !== '')) {
+                continue;
+            }
+
+            $matches = $roleClass::query()
+                ->where(function ($candidate) use ($keyName, $value): void {
+                    $candidate->where($keyName, $value);
+                    if (is_string($value)) {
+                        $candidate->orWhere('name', $value)->orWhere('label', $value);
+                    }
+                })
+                ->pluck($keyName)
+                ->unique()
+                ->values();
+
+            if ($matches->count() > 1) {
+                throw new \RuntimeException("Ambiguous Kinship role reference [{$value}]. Pass a Role model instead.");
+            }
+
+            if ($matches->isNotEmpty()) {
+                $resolved[] = $matches->first();
+            }
+        }
+
+        return collect($resolved)->unique()->values()->all();
     }
 
-    private function invalidateKinshipCache(): void
+    /** @param list<int|string> $roleIds */
+    private function invalidateRoleScopes(array $roleIds): void
     {
-        if (is_string($this->guard_name) && $this->guard_name !== '') {
-            app(PermissionCacheInvalidator::class)->invalidateGuard($this->guard_name);
+        if ($roleIds === []) {
+            return;
         }
+
+        $roleClass = KinshipModels::role();
+        $scopeKey = app(WorkspaceConfiguration::class)->roleForeignKey();
+        $scopes = $roleClass::query()->withTrashed()->whereKey($roleIds)->pluck($scopeKey);
+
+        foreach ($scopes as $scope) {
+            if (is_int($scope) || is_string($scope)) {
+                app(PermissionCacheInvalidator::class)->invalidateScope((string) $scope);
+            }
+        }
+    }
+
+    private function invalidateDefinitions(): void
+    {
+        app(PermissionCacheInvalidator::class)->invalidateDefinitions();
     }
 }

@@ -35,13 +35,11 @@ class MiddlewareTest extends PackageTestCase
         $role = Role::query()->create([
             'name' => 'manager',
             'label' => 'Manager',
-            'guard_name' => 'web',
         ]);
         $permission = Permission::query()->create([
             'name' => 'user.update',
             'label' => 'Update users',
             'group' => 'user',
-            'guard_name' => 'web',
         ]);
         $user->assignRoles($role)->assignPermissions($permission);
 
@@ -68,10 +66,9 @@ class MiddlewareTest extends PackageTestCase
             ]);
     }
 
-    public function test_laravel_auth_middleware_selects_the_guard_for_kinship(): void
+    public function test_laravel_auth_strategy_does_not_partition_kinship_authorization(): void
     {
         config([
-            'kinship.guard' => null,
             'auth.guards.api' => [
                 'driver' => 'session',
                 'provider' => 'users',
@@ -81,13 +78,11 @@ class MiddlewareTest extends PackageTestCase
         $role = Role::query()->create([
             'name' => 'api-reporter',
             'label' => 'API Reporter',
-            'guard_name' => 'api',
         ]);
         $permission = Permission::query()->create([
             'name' => 'report.view',
             'label' => 'View reports',
             'group' => 'report',
-            'guard_name' => 'api',
         ]);
         $role->givePermissionTo($permission);
         $user->allRoles()->attach($role);

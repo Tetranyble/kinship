@@ -16,7 +16,6 @@ class CustomWorkspaceResolverTest extends ResolverWorkspacePackageTestCase
         $user = User::query()->create(['name' => 'Ada', 'email' => 'ada@example.test']);
         $role = Role::query()->create([
             'name' => 'admin',
-            'guard_name' => 'web',
             'workspace_id' => 'workspace-from-request',
         ]);
 

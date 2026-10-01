@@ -5,6 +5,9 @@ namespace Tetranyble\Kinship\Support;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use RuntimeException;
+use Tetranyble\Kinship\Contracts\Group as GroupContract;
+use Tetranyble\Kinship\Contracts\Workspace as WorkspaceContract;
+use Tetranyble\Kinship\Models\Group;
 use Tetranyble\Kinship\Models\Permission;
 use Tetranyble\Kinship\Models\Role;
 
@@ -20,6 +23,42 @@ final class KinshipModels
     public static function permission(): string
     {
         return self::configuredModel('permission', Permission::class, Permission::class);
+    }
+
+    /** @return class-string<Model&GroupContract> */
+    public static function group(): string
+    {
+        $configured = config('kinship.models.group', Group::class);
+
+        if (! is_string($configured)
+            || $configured === ''
+            || ! is_a($configured, Model::class, true)
+            || ! is_a($configured, GroupContract::class, true)) {
+            throw new RuntimeException(
+                'Kinship requires kinship.models.group to be an Eloquent model implementing '.GroupContract::class.'.'
+            );
+        }
+
+        /** @var class-string<Model&GroupContract> $configured */
+        return $configured;
+    }
+
+    /** @return class-string<Model&WorkspaceContract> */
+    public static function workspace(): string
+    {
+        $configured = config('kinship.models.workspace');
+
+        if (! is_string($configured)
+            || $configured === ''
+            || ! is_a($configured, Model::class, true)
+            || ! is_a($configured, WorkspaceContract::class, true)) {
+            throw new RuntimeException(
+                'Kinship requires kinship.models.workspace to be an Eloquent model implementing '.WorkspaceContract::class.'.'
+            );
+        }
+
+        /** @var class-string<Model&WorkspaceContract> $configured */
+        return $configured;
     }
 
     /** @return class-string<Model&Authenticatable> */

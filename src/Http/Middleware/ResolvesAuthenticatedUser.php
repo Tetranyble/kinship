@@ -3,31 +3,15 @@
 namespace Tetranyble\Kinship\Http\Middleware;
 
 use Illuminate\Http\Request;
-use Illuminate\Routing\Route;
 
 trait ResolvesAuthenticatedUser
 {
     protected function resolveAuthenticatedUser(Request $request): mixed
     {
-        if ($user = $request->user()) {
-            return $user;
-        }
-
-        $route = $request->route();
-        $routeMiddleware = $route instanceof Route ? $route->gatherMiddleware() : [];
-        $preferredGuards = collect($routeMiddleware)
-            ->filter(fn (mixed $middleware): bool => is_string($middleware) && str_starts_with($middleware, 'auth:'))
-            ->flatMap(function (string $middleware): array {
-                $guards = explode(':', $middleware, 2)[1] ?? '';
-
-                return array_values(array_filter(array_map('trim', explode(',', $guards))));
-            });
-
-        return $preferredGuards
-            ->merge(array_keys((array) config('auth.guards', [])))
-            ->unique()
-            ->map(fn (string $guard): mixed => auth($guard)->user())
-            ->first(fn (mixed $user): bool => $user !== null);
+        // Authentication belongs to the host application. Kinship authorizes only
+        // the principal already established for this request and never scans other
+        // guards for an alternative identity.
+        return $request->user();
     }
 
     protected function unauthorized(Request $request): mixed

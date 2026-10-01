@@ -37,16 +37,15 @@ final class CachedPermissionNameResolver implements PermissionNameResolver
         }
 
         $versionKeys = [
-            $this->keys->guardVersion($context->guard),
-            $this->keys->scopeVersion($context->guard, $scope),
-            $this->keys->subjectVersion($subject, $context->guard),
+            $this->keys->definitionsVersion(),
+            $this->keys->scopeVersion($scope),
+            $this->keys->subjectVersion($subject, $scope),
         ];
 
         try {
             $versions = $this->cache->versions($versionKeys);
             $cacheKey = $this->keys->permissions($subject, $context, $versions);
             $permissions = $this->cache->permissions($cacheKey);
-
             if ($permissions !== null) {
                 return $permissions;
             }
@@ -59,7 +58,7 @@ final class CachedPermissionNameResolver implements PermissionNameResolver
         try {
             $this->cache->putPermissions($cacheKey, $permissions, $ttl);
         } catch (Throwable) {
-            // Cache availability must not make the authorization DB unavailable.
+            // Authorization remains database-backed when the cache is unavailable.
         }
 
         return $permissions;

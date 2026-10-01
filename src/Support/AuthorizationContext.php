@@ -5,7 +5,6 @@ namespace Tetranyble\Kinship\Support;
 final readonly class AuthorizationContext
 {
     public function __construct(
-        public string $guard,
         public bool $workspaceEnabled,
         public int|string|null $workspaceIdentifier,
     ) {}
@@ -24,6 +23,6 @@ final readonly class AuthorizationContext
     {
         $scope = $this->workspaceScope($configuration) ?? '__kinship_unresolved__';
 
-        return hash('sha256', $this->guard."\0".($this->workspaceEnabled ? 'workspace' : 'global')."\0".$scope);
+        return hash('sha256', ($this->workspaceEnabled ? 'workspace' : 'global')."\0".$scope);
     }
 }

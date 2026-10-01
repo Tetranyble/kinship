@@ -52,12 +52,11 @@ use Illuminate\Support\Facades\Gate;
 
 Gate::define(
     'kinship.impersonate',
-    function (User $actor, User $target, string $guard): bool {
+    function (User $actor, User $target): bool {
         return $actor->hasPermission('support.impersonate')
             && $actor->hasRecentMfaConfirmation()
             && $target->isLoginLocked()
-            && ! $target->isComplianceSuspended()
-            && $guard === 'web';
+            && ! $target->isComplianceSuspended();
     },
 );
 ```

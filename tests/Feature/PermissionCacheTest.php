@@ -6,7 +6,6 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use Tetranyble\Kinship\Cache\PermissionCacheInvalidator;
 use Tetranyble\Kinship\Models\Permission;
 use Tetranyble\Kinship\Models\Role;
 use Tetranyble\Kinship\Permissions\DatabasePermissionGrantSource;
@@ -63,6 +62,38 @@ class PermissionCacheTest extends PackageTestCase
         $this->assertFalse(User::query()->findOrFail($user->getKey())->hasPermission('invoice.approve'));
     }
 
+    public function test_reverse_permission_role_mutations_invalidate_cached_results(): void
+    {
+        $user = User::query()->create(['name' => 'Ada', 'email' => 'ada@example.test']);
+        $role = Role::query()->create(['name' => 'reviewer']);
+        $permission = $this->permission('invoice.approve');
+        $user->assignRoles($role);
+
+        $this->assertFalse($user->hasPermission('invoice.approve'));
+
+        $permission->assignRoles($role);
+        $this->assertTrue($user->hasPermission('invoice.approve'));
+
+        $permission->syncRoles();
+        $this->assertFalse($user->hasPermission('invoice.approve'));
+    }
+
+    public function test_direct_eloquent_pivot_mutations_invalidate_cached_results(): void
+    {
+        $user = User::query()->create(['name' => 'Ada', 'email' => 'ada@example.test']);
+        $role = Role::query()->create(['name' => 'reviewer']);
+        $permission = $this->permission('invoice.export');
+        $user->assignRoles($role);
+
+        $this->assertFalse($user->hasPermission('invoice.export'));
+
+        $role->permissions()->attach($permission->id);
+        $this->assertTrue($user->hasPermission('invoice.export'));
+
+        $role->permissions()->detach($permission->id);
+        $this->assertFalse($user->hasPermission('invoice.export'));
+    }
+
     public function test_large_permission_sets_are_flattened_once_and_cached_as_names(): void
     {
         $user = User::query()->create(['name' => 'Ada', 'email' => 'ada@example.test']);
@@ -74,7 +105,6 @@ class PermissionCacheTest extends PackageTestCase
                 'name' => "resource_{$index}.view",
                 'label' => "Resource {$index} View",
                 'group' => "resource_{$index}",
-                'guard_name' => 'web',
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
@@ -89,6 +119,7 @@ class PermissionCacheTest extends PackageTestCase
             DB::table('permission_user')->insert($ids->map(fn (mixed $id): array => [
                 'permission_id' => $id,
                 'user_id' => $user->getKey(),
+                'workspace_id' => '__kinship_global__',
                 'created_at' => $now,
                 'updated_at' => $now,
             ])->all());
@@ -124,7 +155,7 @@ class PermissionCacheTest extends PackageTestCase
         $permission = $this->permission('settlement.release');
         DB::table('team_user')->insert(['team_id' => 10, 'user_id' => $user->getKey()]);
         DB::table('permission_team')->insert(['team_id' => 10, 'permission_id' => $permission->getKey()]);
-        app(PermissionCacheInvalidator::class)->invalidateSubject($user, 'web');
+        $user->forgetKinshipAuthorizationCache();
 
         DB::enableQueryLog();
         DB::flushQueryLog();

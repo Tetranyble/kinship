@@ -5,25 +5,20 @@ namespace Tetranyble\Kinship\Console;
 use Illuminate\Console\Command;
 use RuntimeException;
 use Tetranyble\Kinship\Catalog\PermissionCatalogSeeder;
-use Tetranyble\Kinship\Contracts\GuardResolver;
 use Tetranyble\Kinship\Support\WorkspaceConfiguration;
 
 final class SeedPermissionCatalogCommand extends Command
 {
     protected $signature = 'kinship:seed
         {--workspace= : Workspace identifier to receive the starter roles}
-        {--guard= : Guard name; defaults to Kinship or Laravel auth configuration}
         {--global : Explicitly seed roles in the global scope}
         {--sync : Replace permissions on managed roles instead of adding missing grants}
         {--dry-run : Validate and show the planned matrix without writing}';
 
     protected $description = 'Seed Kinship permissions and starter roles from the opt-in catalog';
 
-    public function handle(
-        PermissionCatalogSeeder $seeder,
-        WorkspaceConfiguration $workspaces,
-        GuardResolver $guards,
-    ): int {
+    public function handle(PermissionCatalogSeeder $seeder, WorkspaceConfiguration $workspaces): int
+    {
         if (! (bool) config('kinship.catalog.enabled', false)) {
             $this->error('Kinship catalog seeding is disabled. Set kinship.catalog.enabled to true first.');
 
@@ -41,7 +36,6 @@ final class SeedPermissionCatalogCommand extends Command
         }
 
         $applicationUsesWorkspaces = $workspaces->enabledFor();
-
         if ($workspace !== null && ! $applicationUsesWorkspaces) {
             $this->error('Workspace seeding requires Kinship workspace mode to be enabled.');
 
@@ -54,14 +48,8 @@ final class SeedPermissionCatalogCommand extends Command
             return self::FAILURE;
         }
 
-        $guardOption = $this->option('guard');
-
         try {
-            $guard = $guards->resolve(
-                requestedGuard: is_string($guardOption) ? $guardOption : null,
-            );
             $result = $seeder->seed(
-                $guard,
                 $workspace,
                 workspaceScoped: $workspace !== null,
                 sync: (bool) $this->option('sync'),
@@ -84,7 +72,7 @@ final class SeedPermissionCatalogCommand extends Command
 
         $scope = $workspace === null ? 'global' : "workspace [{$workspace}]";
         $verb = $result->dryRun ? 'Validated' : 'Seeded';
-        $this->info("{$verb} Kinship catalog for guard [{$guard}] in {$scope} scope.");
+        $this->info("{$verb} Kinship catalog in {$scope} scope.");
 
         return self::SUCCESS;
     }

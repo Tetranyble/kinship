@@ -1,63 +1,39 @@
-# Configuration and schema reference
+# Configuration and schema
 
-Publish configuration before the first migration whenever the application changes models, tables, pivot keys, or workspace column names:
+## Core configuration
 
-```bash
-php artisan vendor:publish --tag=kinship-config
-```
-
-## Models
+Kinship owns role/permission authorization only. It does not derive authorization from Laravel guard names. Authentication must establish the subject before Kinship middleware runs.
 
 ```php
 'models' => [
-    'role' => Tetranyble\Kinship\Models\Role::class,
-    'permission' => Tetranyble\Kinship\Models\Permission::class,
+    'role' => Role::class,
+    'permission' => Permission::class,
+    'group' => Group::class,
+    'workspace' => App\Models\Workspace::class,
     'user' => null,
 ],
-```
 
-When `user` is `null`, Kinship resolves the active auth provider model. It must extend Eloquent `Model` and implement Laravel's `Authenticatable` contract.
-
-Custom role and permission classes must extend Kinship's corresponding models so soft-delete behavior and authorization APIs remain intact.
-
-## Tables and pivot keys
-
-```php
 'tables' => [
     'roles' => 'roles',
     'permissions' => 'permissions',
     'role_user' => 'role_user',
     'permission_user' => 'permission_user',
     'permission_role' => 'permission_role',
+    'groups' => 'groups',
+    'group_user' => 'group_user',
+    'group_role' => 'group_role',
+    'group_permission' => 'group_permission',
 ],
 
 'columns' => [
     'role_foreign_key' => 'role_id',
     'permission_foreign_key' => 'permission_id',
     'user_foreign_key' => 'user_id',
+    'group_foreign_key' => 'group_id',
 ],
 ```
 
-These values configure all package relationships and migrations. The supplied role and permission primary keys and pivots use unsigned big integers. Applications with UUID/ULID user, role, or permission primary keys should publish and adapt the pivot migrations, then disable package migration loading.
-
-Workspace identifiers are different: the roles table stores them in a string scope column and natively accepts integers, UUIDs, ULIDs, and strings.
-
-## Guard
-
-```php
-'guard' => null,
-```
-
-`null` delegates to the host application. Kinship resolves a guard in this order:
-
-1. A guard explicitly passed to an API such as `Role::forGuard('api')` or `kinship:seed --guard=api`.
-2. The subject's public `guardName()` method.
-3. The subject's non-empty `guard_name` attribute.
-4. A non-null `kinship.guard` package fallback.
-5. Laravel's runtime-selected guard from `AuthManager::getDefaultDriver()`.
-6. `auth.defaults.guard`, with `web` only as the final framework-less fallback.
-
-Laravel's `auth:<guard>` middleware calls `AuthManager::shouldUse()`, so normal authenticated requests automatically evaluate Kinship roles and permissions under that active guard. Set `kinship.guard` to a string only when the package needs an intentional fallback different from the application. A custom integration can bind `GuardResolver` before Kinship registers.
+The supplied migrations use unsigned big integer subject/role/permission keys. Applications using UUID/ULID keys should publish and adapt the migrations, then set `migrations.load=false`. Workspace identifiers are stored canonically as strings and may be integer, UUID, ULID, or string values.
 
 ## Workspace
 
@@ -68,195 +44,40 @@ Laravel's `auth:<guard>` middleware calls `AuthManager::shouldUse()`, so normal 
     'context_resolver' => Tetranyble\Kinship\Workspace\ModelAuthorizationContextResolver::class,
     'subject_foreign_key' => 'workspace_id',
     'role_foreign_key' => 'workspace_id',
+    'group_foreign_key' => 'workspace_id',
     'global_scope_value' => '__kinship_global__',
     'mapping' => [
-        'model' => null,
         'relationship' => null,
         'subject_foreign_key' => null,
-        'workspace_owner_key' => 'id',
+        'workspace_owner_key' => null,
         'role_foreign_key' => null,
+        'group_foreign_key' => null,
     ],
 ],
 ```
 
-| Key | Meaning |
-| --- | --- |
-| `enabled` | `null` contract/mapping detection, or an explicit boolean override |
-| `resolver` | Strategy that resolves a workspace identifier from the current subject |
-| `context_resolver` | Strategy producing the immutable guard/workspace authorization context |
-| `subject_foreign_key` | Default workspace column on a user/subject |
-| `role_foreign_key` | String scope column persisted on roles |
-| `global_scope_value` | Reserved non-null scope for non-workspace authorization |
-| `mapping.model` | Host Eloquent workspace model |
-| `mapping.relationship` | Existing relationship name on an unmodified subject model |
-| `mapping.subject_foreign_key` | Mapped subject workspace key |
-| `mapping.workspace_owner_key` | Workspace model key read by relationship fallback |
-| `mapping.role_foreign_key` | Optional mapped role scope column; defaults to top-level value |
+`models.workspace` is the single configured host tenant model. It must be an Eloquent model implementing `Tetranyble\Kinship\Contracts\Workspace`; the optional `IsWorkspace` trait supplies the conventional identifier and inverse relationships. `role_foreign_key` and `group_foreign_key` are intentionally separate so an existing role table and an existing team/access-group table do not have to share a physical tenant column name. `enabled=null` auto-detects `WorkspaceSubject`, a mapping override, or a configured user model implementing the subject contract. A workspace-aware subject without an identifier fails closed.
 
-The global sentinel must be a non-empty string that can never be a real workspace identifier.
 
-## Acting roles
+## Host-owned group model
+
+The default `Tetranyble\Kinship\Models\Group` is optional. A host application may configure any Eloquent model implementing `Tetranyble\Kinship\Contracts\Group`:
 
 ```php
-'acting_roles' => [
-    'enabled' => true,
-    'mode' => 'replace',
-    'allow_unassigned' => false,
-    'session_prefix' => 'kinship.acting_role',
+'models' => [
+    'group' => App\Models\Team::class,
+],
+
+'group' => [
+    'lookup_columns' => ['code'],
 ],
 ```
 
-`mode=replace` evaluates only the assumed role. `mode=merge` adds it to the
-subject's normal grants. `allow_unassigned=false` is the secure default. Session
-storage is context-bound by user, guard, and workspace fingerprint.
+`Tetranyble\Kinship\Concerns\IsGroup` supplies the conventional relationships, mutation helpers, scope immutability, and cache invalidation. The contract requires only a persisted group identifier and workspace identifier. Group `name`, `label`, `description`, `is_system`, soft deletes, timestamps, and BIGINT identifiers are defaults of the package-owned schema, not package-wide requirements.
 
-## User impersonation
+When using an existing group table or UUID/ULID identifiers, the application should own/adapt the migrations and set `kinship.migrations.load=false` so the package does not also create its conventional schema.
 
-```php
-'impersonation' => [
-    'enabled' => false,
-    'authorizer' => GateImpersonationAuthorizer::class,
-    'ability' => 'kinship.impersonate',
-    'require_reason' => true,
-    'max_reason_length' => 1000,
-    'require_same_user_type' => true,
-    'ttl' => 1800,
-    'session_key' => 'kinship.impersonation',
-    'middleware' => ValidateImpersonationSession::class,
-    'stateless_broker' => null,
-    'stateless_middleware' => ValidateStatelessImpersonation::class,
-    'auto_middleware' => false,
-    'middleware_group' => 'web',
-],
-```
-
-The feature is opt-in. The configured authorizer controls whether a switch may
-start. The configured middleware must extend `ValidateImpersonationSession` and
-continuously enforces application-owned MFA and account conditions. Kinship
-registers the alias but does not attach it to routes by default. Applications
-must place `kinship.impersonation.valid` explicitly. Setting `auto_middleware`
-to `true` is an intentional opt-in for the configured middleware group.
-`stateless_broker` must implement `StatelessImpersonationTokenBroker`. Setting
-it opts the application into the separate `kinship.impersonation.stateless`
-alias. `stateless_middleware` may name an application subclass of
-`ValidateStatelessImpersonation` for additional conditions. It is never added
-to `web` or any other middleware group automatically.
-See [User impersonation](impersonation.md).
-
-## Permission catalog
-
-Catalog seeding is an optional provisioning feature, independent from authorization at runtime:
-
-```php
-'catalog' => [
-    'enabled' => false,
-    'source' => Tetranyble\Kinship\Catalog\ConfigPermissionCatalog::class,
-    'separator' => '.',
-    'discovery' => [
-        'enabled' => false,
-        'path' => 'Models',
-        'namespace' => null,
-    ],
-    'abilities' => [
-        'index' => 'View All',
-        'view' => 'Read',
-        'create' => 'Create',
-        'update' => 'Update',
-        'delete' => 'Delete',
-        'restore' => 'Restore',
-        'force_delete' => 'Permanently Delete',
-    ],
-    'resources' => [
-        'user' => ['label' => 'User'],
-    ],
-    'permissions' => [],
-    'roles' => [
-        'viewer' => ['permissions' => ['*.index', '*.view']],
-    ],
-],
-```
-
-With discovery disabled, nothing reads the host model directory. `resources` is only explicit configuration expanded as `<resource><separator><ability>`. Set `separator` to `:` for names such as `invoice:view`, select a per-resource ability subset with `['abilities' => ['view', 'update']]`, or set `resources=[]` to disable configured-resource expansion completely.
-
-For compatibility with applications whose old permission bootstrapper scanned models, set `discovery.enabled=true`. The default `Models` path resolves to `app/Models`, and a null namespace derives `<application namespace>\Models`. Nested directories are supported. Only loadable, concrete Eloquent model classes become resources; abstract classes and non-model PHP classes are ignored. An absolute/custom path must provide its PSR-4 namespace explicitly:
-
-```php
-'discovery' => [
-    'enabled' => true,
-    'path' => base_path('src/Domain'),
-    'namespace' => 'App\\Domain',
-],
-```
-
-Discovery runs only when `kinship:seed` is explicitly invoked. Its resources are merged with `resources` and `permissions`, allowing gradual migration away from scanning.
-
-`permissions` accepts all of these explicit forms:
-
-```php
-'permissions' => [
-    'invoice:read',
-    'invoice:approve' => 'Approve Invoice',
-    ['name' => 'report.export', 'label' => 'Export Reports', 'group' => 'report'],
-    'payment:refund' => ['label' => 'Refund Payment', 'group' => 'payments'],
-],
-```
-
-Permission names are persisted verbatim. Labels and groups are inferred when omitted. Role permission entries are exact names or Laravel-style wildcard patterns, and only match permissions in the configured catalog.
-
-Enable and run the command explicitly:
-
-```bash
-php artisan kinship:seed --dry-run
-php artisan kinship:seed
-php artisan kinship:seed --guard=api
-php artisan kinship:seed --sync
-```
-
-| Option | Behavior |
-| --- | --- |
-| `--dry-run` | validates and counts the matrix without a database write |
-| `--guard=api` | seeds definitions for a specific guard |
-| `--sync` | replaces grants on catalog-managed roles; default behavior is additive |
-| `--workspace=<id>` | seeds roles into one workspace scope |
-| `--global` | explicitly selects the global scope in a workspace-enabled application |
-
-Workspace-enabled applications must pass either `--workspace` or `--global`. Non-workspace applications reject `--workspace`. Re-running is safe: managed records are updated, soft-deleted managed records are restored, missing grants are attached, and unrelated records are never deleted. `--sync` may detach non-catalog grants from a catalog-managed role, so use it only when the catalog owns that role.
-
-For a catalog stored in code, a database, or another service, implement `PermissionCatalog` and configure its class as `catalog.source`:
-
-```php
-use Tetranyble\Kinship\Catalog\PermissionDefinition;
-use Tetranyble\Kinship\Catalog\RoleDefinition;
-use Tetranyble\Kinship\Contracts\PermissionCatalog;
-
-final class ApplicationPermissionCatalog implements PermissionCatalog
-{
-    public function permissions(): array
-    {
-        return [
-            new PermissionDefinition('invoice:approve', 'Approve Invoice', 'invoice'),
-        ];
-    }
-
-    public function roles(): array
-    {
-        return [
-            new RoleDefinition(
-                name: 'reviewer',
-                label: 'Reviewer',
-                description: 'Reviews invoices',
-                order: 20,
-                system: true,
-                permissions: ['invoice:*'],
-            ),
-        ];
-    }
-}
-```
-
-The source is resolved through Laravel's container, so constructor injection is supported. An application can alternatively bind `PermissionCatalog` directly before Kinship registers.
-
-## Permission cache and grant sources
+## Cache
 
 ```php
 'cache' => [
@@ -265,147 +86,94 @@ The source is resolved through Laravel's container, so constructor injection is 
     'prefix' => 'kinship',
     'ttl' => 3600,
 ],
-
-'permission_sources' => [
-    Tetranyble\Kinship\Permissions\DatabasePermissionGrantSource::class,
-],
 ```
 
-`store=null` follows Laravel's default cache store, including Redis when the host switches to it. `ttl` is expressed in seconds. Cache keys and invalidation versions are isolated by subject, guard, and workspace.
+Cache entries are isolated by subject and workspace. Definition, workspace-scope, and subject-scope version keys invalidate flattened grants without key scans.
 
-The built-in source merges direct and role permissions in one SQL statement. Append application-owned `PermissionGrantSource` implementations for teams or other grant mechanisms. Kinship intentionally provides the extension contract without owning team schema. See [Permission caching and grant sources](caching-and-sources.md) for query requirements, invalidation, and a complete team example.
+## Permission catalog
 
-## Middleware
-
-```php
-'middleware' => [
-    'register_aliases' => true,
-    'aliases' => [
-        'kinship.role' => Tetranyble\Kinship\Http\Middleware\RoleMiddleware::class,
-        'kinship.permission' => Tetranyble\Kinship\Http\Middleware\PermissionMiddleware::class,
-    ],
-    'unauthorized_message' => 'This action is unauthorized.',
-],
-```
-
-Disable alias registration if the host application registers aliases centrally or needs different names.
-
-## Migration ownership
-
-```php
-'migrations' => [
-    'load' => true,
-],
-```
-
-Kinship loads five migrations by default. To own/customize them:
+The catalog is disabled by default and never runs automatically. Enable it explicitly, then use:
 
 ```bash
-php artisan vendor:publish --tag=kinship-migrations
+php artisan kinship:seed --dry-run
+php artisan kinship:seed
+php artisan kinship:seed --workspace=<id>
+php artisan kinship:seed --global
+php artisan kinship:seed --sync
 ```
 
-Then set `migrations.load=false` before migrating. Do not load both copies.
+There is no guard option because authentication strategy is not part of authorization identity.
 
 ## Schema
 
-### Roles
+### roles
 
 - unsigned bigint `id`
 - `name`, optional `label`, optional `description`
 - integer `order`
 - boolean `is_system`
-- `guard_name`
-- indexed, non-null string workspace scope column
+- indexed non-null workspace scope column
 - timestamps and `deleted_at`
-- unique `(name, guard_name, workspace_scope_column)`
+- unique `(name, workspace_scope_column)`
 
-Global roles receive `global_scope_value` through both a database default and a model creating hook. This avoids database-specific `NULL` uniqueness semantics.
-
-Workspace role IDs are stored canonically as strings. No foreign key is created to a host workspace table because the host may use any model, table, connection, or key type.
-
-### Permissions
+### permissions
 
 - unsigned bigint `id`
-- `name`, optional `label`, optional indexed `group`
-- `guard_name`
+- unique `name`
+- optional `label`, optional indexed `group`
 - timestamps and `deleted_at`
-- unique `(name, guard_name)`
 
-### Pivots
+### role_user
 
-- `role_user`: user and role keys, timestamps, composite primary key
-- `permission_user`: permission and user keys, timestamps, composite primary key
-- `permission_role`: permission and role keys, timestamps, composite primary key
+- subject key + role key
+- composite primary key
+- timestamps
 
-Package-owned role and permission references cascade on hard delete. Soft deletes retain pivots but related model global scopes prevent authorization; restoring the model restores its assignments.
+### permission_role
 
-## Existing schemas
+- permission key + role key
+- composite primary key
+- timestamps
 
-For an existing authorization database:
+### permission_user
 
-1. Set `migrations.load=false`.
-2. Configure model/table/pivot names.
-3. Ensure role and permission models extend Kinship models.
-4. Add the non-null role scope column and backfill global rows with the configured sentinel.
-5. Replace role uniqueness with `(name, guard_name, scope)`.
-6. Ensure `deleted_at` exists or intentionally override soft-delete behavior in application-owned models.
-7. Run integration tests for role assignment, direct permissions, workspace switching, and guard switching.
+- permission key + subject key + workspace scope
+- composite primary key over all three columns
+- subject/scope index
+- timestamps
 
-## Stable workspace schema
+### groups (default package migration)
 
-Enabling or disabling workspace behavior does not add or remove columns. Existing global rows remain in the sentinel scope. New workspace rows use their canonical identifier.
+- unsigned bigint `id`
+- `name`, optional `label`, optional `description`
+- boolean `is_system` metadata
+- indexed non-null configured group workspace scope column
+- timestamps and `deleted_at`
+- unique `(name, workspace_scope_column)`
 
-When converting an existing global application to workspaces, decide whether old global roles should:
+These are conventional defaults for `Tetranyble\Kinship\Models\Group`. Host-owned models may use different fields, table names, primary-key types, deletion behavior, and workspace column names as long as their contract/configuration supplies the required authorization semantics.
 
-- remain global and be unavailable to workspace-aware users; or
-- be duplicated/backfilled into specific workspaces through an application migration.
+### group_user
 
-Kinship deliberately does not make that business decision automatically.
+- group key + subject key
+- composite primary key
+- reverse lookup index
+- timestamps
 
-## Service container extension points
+The membership pivot deliberately has no workspace column: the tenant is defined by the group. One identity may therefore have memberships in groups belonging to several tenants, while authorization activates only the current workspace.
 
-The provider binds defaults only if the application has not already bound them:
+### group_role / group_permission
 
-- `GuardResolver`
-- `PermissionCacheStore`
-- `PermissionNameResolver`
-- `WorkspaceResolver`
-- `AuthorizationContextResolver`
-- `PermissionCatalog`
+- group + role or group + permission composite primary key
+- timestamps
+- role/group workspace equality is enforced by Kinship mutations, and authorization queries independently require both principals to match the current workspace
 
-Configured resolver classes are resolved through the Laravel container and validated against their interfaces. `WorkspaceConfiguration` is registered as an immutable singleton after configuration merge.
+The workspace column on `permission_user` is intentional: direct grants are workspace-local instead of silently applying to every workspace belonging to the same subject.
 
-## Validation failures
+## Existing installations
 
-Kinship throws early for:
+The 2.x upgrade migration removes authorization `guard_name` columns and adds workspace scope to direct permission pivots. Review direct grants before deployment: legacy direct grants had no workspace boundary, so the migration places them in Kinship's global sentinel rather than guessing a tenant. Applications that want old grants in particular workspaces should perform an explicit domain migration.
 
-- non-boolean/non-null `workspace.enabled`;
-- empty workspace keys or global sentinel;
-- a partial workspace mapping;
-- a mapped class that is not an Eloquent model;
-- an invalid user, role, permission, workspace resolver, or context resolver class;
-- a real workspace identifier equal to the global sentinel;
-- a relationship returning an unexpected model.
+## Extension points
 
-## Supported versions and verification
-
-Production constraints support PHP 8.2+ and Laravel 9–13. Individual Laravel
-versions may require a newer PHP runtime. The GitHub Actions matrix tests:
-
-- PHP 8.2 / Laravel 9 / Testbench 7 / PHPUnit 9;
-- PHP 8.2 / Laravel 10 / Testbench 8 / PHPUnit 10;
-- PHP 8.3 / Laravel 11 / Testbench 9 / PHPUnit 11;
-- PHP 8.4 / Laravel 12 / Testbench 10 / PHPUnit 11;
-- PHP 8.4 / Laravel 13 / Testbench 11 / PHPUnit 12.
-
-Quality gates:
-
-```bash
-composer validate --strict
-composer format
-composer analyse
-composer test
-composer check
-```
-
-Laravel 9 compatibility is retained because Kinship consumers requested it, but Laravel 9 itself is upstream end-of-life. Composer may report framework advisories that cannot be fixed within the Laravel 9 line. Kinship does not use the affected email validation, file validation, or signed URL features, but host applications remain responsible for their overall framework risk and upgrade plan.
+Kinship exposes `PermissionCacheStore`, `PermissionNameResolver`, `EffectiveRoleResolver`, `WorkspaceResolver`, `AuthorizationContextResolver`, `PermissionCatalog`, and `PermissionGrantSource`. Authentication guard resolution is deliberately not an extension point because it is outside RBAC semantics.

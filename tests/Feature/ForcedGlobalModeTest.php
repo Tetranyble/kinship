@@ -15,7 +15,7 @@ class ForcedGlobalModeTest extends ForcedGlobalPackageTestCase
     public function test_false_override_keeps_a_workspace_capable_model_in_global_mode(): void
     {
         $user = WorkspaceUser::query()->create(['name' => 'Ada', 'email' => 'ada@example.test']);
-        $role = Role::query()->create(['name' => 'admin', 'guard_name' => 'web']);
+        $role = Role::query()->create(['name' => 'admin']);
 
         $this->assertFalse(app(WorkspaceConfiguration::class)->enabledFor($user));
 

@@ -3,13 +3,18 @@
 namespace Tetranyble\Kinship\Concerns;
 
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use Illuminate\Database\Eloquent\Relations\Pivot;
 use Illuminate\Support\Collection;
 use RuntimeException;
 use Tetranyble\Kinship\Cache\PermissionCacheInvalidator;
+use Tetranyble\Kinship\Contracts\EffectiveRoleResolver;
+use Tetranyble\Kinship\Contracts\Group as GroupContract;
 use Tetranyble\Kinship\Contracts\PermissionNameResolver;
 use Tetranyble\Kinship\Models\Permission;
+use Tetranyble\Kinship\Models\Pivots\GroupUser;
+use Tetranyble\Kinship\Models\Pivots\PermissionUser;
+use Tetranyble\Kinship\Models\Pivots\RoleUser;
 use Tetranyble\Kinship\Models\Role;
 use Tetranyble\Kinship\Support\AuthorizationContext;
 use Tetranyble\Kinship\Support\KinshipModels;
@@ -20,19 +25,7 @@ trait HasRolesAndPermissions
 {
     use ResolvesKinshipContext;
 
-    /** @var array<string, Collection<int, Permission>> */
-    protected array $kinshipPermissionCache = [];
-
-    /** @var array<string, Collection<int, string>> */
-    protected array $kinshipPermissionNameCache = [];
-
-    /** @var array<string, array<string, true>> */
-    protected array $kinshipPermissionSetCache = [];
-
-    /** @var array<string, Role|null> */
-    protected array $kinshipActingRoleCache = [];
-
-    /** @return BelongsToMany<Role, $this, Pivot> */
+    /** @return BelongsToMany<Role, $this, RoleUser> */
     public function roles(): BelongsToMany
     {
         $relation = $this->allRoles();
@@ -44,7 +37,7 @@ trait HasRolesAndPermissions
     /**
      * Unscoped persistence relationship. Authorization checks must use roles().
      */
-    /** @return BelongsToMany<Role, $this, Pivot> */
+    /** @return BelongsToMany<Role, $this, RoleUser> */
     public function allRoles(): BelongsToMany
     {
         $roleClass = KinshipModels::role();
@@ -54,20 +47,61 @@ trait HasRolesAndPermissions
             (string) config('kinship.tables.role_user', 'role_user'),
             (string) config('kinship.columns.user_foreign_key', 'user_id'),
             (string) config('kinship.columns.role_foreign_key', 'role_id'),
-        )->withTimestamps();
+        )->using(RoleUser::class)->withTimestamps();
     }
 
-    /** @return BelongsToMany<Permission, $this, Pivot> */
+    /** @return BelongsToMany<Model&GroupContract, $this, GroupUser> */
+    public function groups(): BelongsToMany
+    {
+        $relation = $this->allGroups();
+        $configuration = app(WorkspaceConfiguration::class);
+        $scope = $this->kinshipAuthorizationContext()->workspaceScope($configuration);
+
+        if ($scope === null) {
+            $relation->getQuery()->whereRaw('1 = 0');
+        } else {
+            $relation->getQuery()->where(
+                $relation->getRelated()->qualifyColumn($configuration->groupForeignKey()),
+                $scope,
+            );
+        }
+
+        return $relation;
+    }
+
+    /**
+     * Unscoped persistence relationship. Authorization checks must use groups().
+     * A single identity may be provisioned into groups in several workspaces.
+     *
+     * @return BelongsToMany<Model&GroupContract, $this, GroupUser>
+     */
+    public function allGroups(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            KinshipModels::group(),
+            (string) config('kinship.tables.group_user', 'group_user'),
+            (string) config('kinship.columns.user_foreign_key', 'user_id'),
+            (string) config('kinship.columns.group_foreign_key', 'group_id'),
+        )->using(GroupUser::class)->withTimestamps();
+    }
+
+    /** @return BelongsToMany<Permission, $this, PermissionUser> */
     public function userPermissions(): BelongsToMany
     {
         $permissionClass = KinshipModels::permission();
+        $configuration = app(WorkspaceConfiguration::class);
+        $scopeKey = $configuration->roleForeignKey();
+        $scope = $this->kinshipWorkspaceScope();
 
         return $this->belongsToMany(
             $permissionClass,
             (string) config('kinship.tables.permission_user', 'permission_user'),
             (string) config('kinship.columns.user_foreign_key', 'user_id'),
             (string) config('kinship.columns.permission_foreign_key', 'permission_id'),
-        )->withTimestamps();
+        )->using(PermissionUser::class)
+            ->withPivot($scopeKey)
+            ->withPivotValue($scopeKey, $scope)
+            ->withTimestamps();
     }
 
     public function primaryRole(): ?Role
@@ -87,43 +121,23 @@ trait HasRolesAndPermissions
     /** @return Collection<int, Permission> */
     public function allPermissions(): Collection
     {
-        $contextKey = $this->kinshipContextFingerprint();
-
-        if (array_key_exists($contextKey, $this->kinshipPermissionCache)) {
-            return $this->kinshipPermissionCache[$contextKey];
-        }
-
         $names = $this->allPermissionNames();
         if ($names->isEmpty()) {
-            return $this->kinshipPermissionCache[$contextKey] = collect();
+            return collect();
         }
 
         $permissionClass = KinshipModels::permission();
 
-        $resolved = [];
-        $permissions = $permissionClass::query()
-            ->where('guard_name', $this->kinshipGuardName())
+        return $permissionClass::query()
             ->whereIn('name', $names->all())
-            ->get();
-
-        foreach ($permissions as $permission) {
-            if ($permission instanceof Permission) {
-                $resolved[] = $permission;
-            }
-        }
-
-        return $this->kinshipPermissionCache[$contextKey] = collect($resolved);
+            ->get()
+            ->filter(fn (mixed $permission): bool => $permission instanceof Permission)
+            ->values();
     }
 
     /** @return Collection<int, string> */
     public function allPermissionNames(): Collection
     {
-        $contextKey = $this->kinshipContextFingerprint();
-
-        if (array_key_exists($contextKey, $this->kinshipPermissionNameCache)) {
-            return $this->kinshipPermissionNameCache[$contextKey];
-        }
-
         $context = $this->kinshipAuthorizationContext();
         $acting = $this->getActingRole();
         $names = $acting !== null && $this->kinshipActingRoleMode() === 'replace'
@@ -131,27 +145,31 @@ trait HasRolesAndPermissions
             : $this->resolveKinshipPermissionNames($context);
 
         if ($acting !== null) {
-            $actingNames = $acting->permissions()
-                ->getQuery()
-                ->where('guard_name', $context->guard)
-                ->pluck('name');
-
-            foreach ($actingNames as $name) {
+            foreach ($acting->permissions()->getQuery()->pluck('name') as $name) {
                 if (is_string($name) && $name !== '') {
                     $names[] = $name;
                 }
             }
         }
 
-        return $this->kinshipPermissionNameCache[$contextKey] = collect($names)
-            ->unique()
-            ->values();
+        return collect($names)->unique()->values();
     }
 
     /** @return Collection<int, string> */
     public function permissions(): Collection
     {
         return $this->allPermissionNames();
+    }
+
+    /** @return Collection<int, string> */
+    public function allRoleNames(): Collection
+    {
+        return collect(array_keys($this->kinshipEffectiveRoleSet()))
+            ->filter(fn (string $token): bool => str_starts_with($token, 'name:'))
+            ->map(fn (string $token): string => substr($token, 5))
+            ->filter(fn (string $name): bool => $name !== '')
+            ->unique()
+            ->values();
     }
 
     public function hasRoles(mixed $roles): bool
@@ -188,8 +206,9 @@ trait HasRolesAndPermissions
         $ids = $this->resolveRoleIds($roles);
 
         if ($ids !== []) {
-            $this->allRoles()->syncWithoutDetaching($ids);
-            $this->invalidateKinshipSharedCache();
+            app(PermissionCacheInvalidator::class)->batch(
+                fn () => $this->allRoles()->syncWithoutDetaching($ids),
+            );
             $this->forgetKinshipCache();
         }
 
@@ -204,14 +223,14 @@ trait HasRolesAndPermissions
         $currentIds = $relation->getQuery()
             ->pluck($related->qualifyColumn($related->getKeyName()))
             ->all();
-        $this->allRoles()->syncWithoutDetaching($ids);
+        app(PermissionCacheInvalidator::class)->batch(function () use ($ids, $currentIds): void {
+            $this->allRoles()->syncWithoutDetaching($ids);
 
-        $detach = array_values(array_diff($currentIds, $ids));
-        if ($detach !== []) {
-            $this->allRoles()->detach($detach);
-        }
-
-        $this->invalidateKinshipSharedCache();
+            $detach = array_values(array_diff($currentIds, $ids));
+            if ($detach !== []) {
+                $this->allRoles()->detach($detach);
+            }
+        });
         $this->forgetKinshipCache();
 
         return $this;
@@ -222,8 +241,7 @@ trait HasRolesAndPermissions
         $ids = $this->resolveRoleIds($roles);
 
         if ($ids !== []) {
-            $this->allRoles()->detach($ids);
-            $this->invalidateKinshipSharedCache();
+            app(PermissionCacheInvalidator::class)->batch(fn () => $this->allRoles()->detach($ids));
             $this->forgetKinshipCache();
         }
 
@@ -261,8 +279,9 @@ trait HasRolesAndPermissions
         $ids = $this->resolvePermissionIds($permissions);
 
         if ($ids !== []) {
-            $this->userPermissions()->syncWithoutDetaching($ids);
-            $this->invalidateKinshipSharedCache();
+            app(PermissionCacheInvalidator::class)->batch(
+                fn () => $this->userPermissions()->syncWithoutDetaching($this->permissionPivotPayload($ids)),
+            );
             $this->forgetKinshipCache();
         }
 
@@ -271,8 +290,10 @@ trait HasRolesAndPermissions
 
     public function syncPermissions(mixed ...$permissions): static
     {
-        $this->userPermissions()->sync($this->resolvePermissionIds($permissions));
-        $this->invalidateKinshipSharedCache();
+        $ids = $this->resolvePermissionIds($permissions);
+        app(PermissionCacheInvalidator::class)->batch(
+            fn () => $this->userPermissions()->sync($this->permissionPivotPayload($ids)),
+        );
         $this->forgetKinshipCache();
 
         return $this;
@@ -283,8 +304,106 @@ trait HasRolesAndPermissions
         $ids = $this->resolvePermissionIds($permissions);
 
         if ($ids !== []) {
-            $this->userPermissions()->detach($ids);
-            $this->invalidateKinshipSharedCache();
+            app(PermissionCacheInvalidator::class)->batch(fn () => $this->userPermissions()->detach($ids));
+            $this->forgetKinshipCache();
+        }
+
+        return $this;
+    }
+
+    public function hasGroup(mixed $group): bool
+    {
+        return $this->hasAnyGroup($group);
+    }
+
+    public function hasAnyGroup(mixed ...$groups): bool
+    {
+        $needles = collect($groups)->flatten()->filter(fn (mixed $group): bool => $this->validGroupNeedle($group));
+
+        if ($needles->isEmpty()) {
+            return false;
+        }
+
+        $relation = $this->groups();
+        $groupModel = $relation->getRelated();
+        $keyName = $groupModel->getKeyName();
+
+        $groupClass = $groupModel::class;
+        $lookupColumns = $this->kinshipGroupLookupColumns();
+
+        return $needles->contains(function (mixed $needle) use ($relation, $keyName, $groupClass, $lookupColumns): bool {
+            $query = clone $relation->getQuery();
+
+            if ($needle instanceof $groupClass) {
+                return $this->sameKinshipWorkspace($needle)
+                    && $needle->getKey() !== null
+                    && $query->whereKey($needle->getKey())->exists();
+            }
+
+            if (is_int($needle)) {
+                return $query->where($keyName, $needle)->exists();
+            }
+
+            return $query->where(function (Builder $candidate) use ($keyName, $needle, $lookupColumns): void {
+                $candidate->where($keyName, $needle);
+                foreach ($lookupColumns as $column) {
+                    if ($column !== $keyName) {
+                        $candidate->orWhere($column, $needle);
+                    }
+                }
+            })->exists();
+        });
+    }
+
+    public function hasAllGroups(mixed ...$groups): bool
+    {
+        $needles = collect($groups)->flatten()->filter(fn (mixed $group): bool => $this->validGroupNeedle($group));
+
+        return $needles->isNotEmpty()
+            && $needles->every(fn (mixed $needle): bool => $this->hasGroup($needle));
+    }
+
+    public function assignGroups(mixed ...$groups): static
+    {
+        $ids = $this->resolveGroupIds($groups);
+
+        if ($ids !== []) {
+            app(PermissionCacheInvalidator::class)->batch(
+                fn () => $this->allGroups()->syncWithoutDetaching($ids),
+            );
+            $this->forgetKinshipCache();
+        }
+
+        return $this;
+    }
+
+    public function syncGroups(mixed ...$groups): static
+    {
+        $ids = $this->resolveGroupIds($groups);
+        $relation = $this->groups();
+        $related = $relation->getRelated();
+        $currentIds = $relation->getQuery()
+            ->pluck($related->qualifyColumn($related->getKeyName()))
+            ->all();
+
+        app(PermissionCacheInvalidator::class)->batch(function () use ($ids, $currentIds): void {
+            $this->allGroups()->syncWithoutDetaching($ids);
+            $detach = array_values(array_diff($currentIds, $ids));
+            if ($detach !== []) {
+                $this->allGroups()->detach($detach);
+            }
+        });
+        $this->forgetKinshipCache();
+
+        return $this;
+    }
+
+    public function removeGroups(mixed ...$groups): static
+    {
+        $ids = $this->resolveGroupIds($groups);
+
+        if ($ids !== []) {
+            app(PermissionCacheInvalidator::class)->batch(fn () => $this->allGroups()->detach($ids));
             $this->forgetKinshipCache();
         }
 
@@ -293,17 +412,7 @@ trait HasRolesAndPermissions
 
     public function getActingRole(): ?Role
     {
-        if (! (bool) config('kinship.acting_roles.enabled', true)) {
-            return null;
-        }
-
-        $contextKey = $this->kinshipContextFingerprint();
-
-        if (array_key_exists($contextKey, $this->kinshipActingRoleCache)) {
-            return $this->kinshipActingRoleCache[$contextKey];
-        }
-
-        if (! app()->bound('session')) {
+        if (! (bool) config('kinship.acting_roles.enabled', true) || ! app()->bound('session')) {
             return null;
         }
 
@@ -313,10 +422,9 @@ trait HasRolesAndPermissions
         }
 
         $roleClass = KinshipModels::role();
-        /** @var Role|null $role */
         $role = $this->scopeKinshipRoleQuery($roleClass::query())->find($roleId);
 
-        return $this->kinshipActingRoleCache[$contextKey] = $role;
+        return $role instanceof Role ? $role : null;
     }
 
     public function isActingAs(): bool
@@ -350,9 +458,15 @@ trait HasRolesAndPermissions
             return false;
         }
 
-        if (! (bool) config('kinship.acting_roles.allow_unassigned', false)
-            && ! $this->roles()->getQuery()->whereKey($roleId)->exists()) {
-            return false;
+        if (! (bool) config('kinship.acting_roles.allow_unassigned', false)) {
+            $assigned = array_fill_keys(
+                app(EffectiveRoleResolver::class)->resolve($this, $this->kinshipAuthorizationContext()),
+                true,
+            );
+
+            if (! isset($assigned['id:'.(string) $roleId])) {
+                return false;
+            }
         }
 
         if (app()->bound('session')) {
@@ -360,14 +474,21 @@ trait HasRolesAndPermissions
         }
 
         $roleClass = KinshipModels::role();
-        $contextKey = $this->kinshipContextFingerprint();
         $actingRole = $this->scopeKinshipRoleQuery($roleClass::query())
             ->whereKey($roleId)
             ->first();
-        $this->kinshipActingRoleCache[$contextKey] = $actingRole instanceof Role ? $actingRole : null;
-        $this->forgetKinshipCache(keepActingRole: true);
 
-        return $this->kinshipActingRoleCache[$contextKey] !== null;
+        if (! $actingRole instanceof Role) {
+            if (app()->bound('session')) {
+                session()->forget($this->kinshipActingRoleSessionKey());
+            }
+
+            return false;
+        }
+
+        $this->forgetKinshipCache();
+
+        return true;
     }
 
     public function stopActingAs(): void
@@ -376,7 +497,6 @@ trait HasRolesAndPermissions
             session()->forget($this->kinshipActingRoleSessionKey());
         }
 
-        unset($this->kinshipActingRoleCache[$this->kinshipContextFingerprint()]);
         $this->forgetKinshipCache();
     }
 
@@ -410,17 +530,12 @@ trait HasRolesAndPermissions
         return $this;
     }
 
-    protected function forgetKinshipCache(bool $keepActingRole = false): void
+    protected function forgetKinshipCache(): void
     {
-        $this->kinshipPermissionCache = [];
-        $this->kinshipPermissionNameCache = [];
-        $this->kinshipPermissionSetCache = [];
         $this->unsetRelation('roles');
+        $this->unsetRelation('groups');
         $this->unsetRelation('userPermissions');
 
-        if (! $keepActingRole) {
-            $this->kinshipActingRoleCache = [];
-        }
     }
 
     /**
@@ -431,32 +546,106 @@ trait HasRolesAndPermissions
     {
         $roleClass = KinshipModels::role();
         $values = collect($roles)->flatten();
-        if ($values->isEmpty()) {
+        $query = $this->scopeKinshipRoleQuery($roleClass::query());
+        $keyName = (new $roleClass)->getKeyName();
+        $resolved = [];
+
+        foreach ($values as $value) {
+            if ($value instanceof $roleClass) {
+                if ($this->sameKinshipWorkspace($value) && $value->getKey() !== null) {
+                    $resolved[] = $value->getKey();
+                }
+
+                continue;
+            }
+
+            if (! is_int($value) && ! (is_string($value) && trim($value) !== '')) {
+                continue;
+            }
+
+            $matches = (clone $query)
+                ->where(function (Builder $candidate) use ($keyName, $value): void {
+                    $candidate->where($keyName, $value);
+                    if (is_string($value)) {
+                        $candidate->orWhere('name', $value)->orWhere('label', $value);
+                    }
+                })
+                ->pluck($keyName)
+                ->unique()
+                ->values();
+
+            if ($matches->count() > 1) {
+                throw new RuntimeException("Ambiguous Kinship role reference [{$value}]. Pass a Role model instead.");
+            }
+
+            if ($matches->isNotEmpty()) {
+                $resolved[] = $matches->first();
+            }
+        }
+
+        return collect($resolved)->unique()->values()->all();
+    }
+
+    /**
+     * @param  array<int, mixed>  $groups
+     * @return list<int|string>
+     */
+    protected function resolveGroupIds(array $groups): array
+    {
+        $groupClass = KinshipModels::group();
+        $values = collect($groups)->flatten();
+        $configuration = app(WorkspaceConfiguration::class);
+        $scope = $this->kinshipAuthorizationContext()->workspaceScope($configuration);
+        $keyName = (new $groupClass)->getKeyName();
+        $resolved = [];
+
+        if ($scope === null) {
             return [];
         }
 
-        $ids = $values
-            ->filter(fn (mixed $value): bool => $value instanceof $roleClass)
-            ->filter(fn (Role $value): bool => $value->guard_name === $this->kinshipGuardName() && $this->sameKinshipWorkspace($value))
-            ->map(fn (Role $value): mixed => $value->getKey());
+        foreach ($values as $value) {
+            if ($value instanceof $groupClass) {
+                if (! $this->sameKinshipWorkspace($value)) {
+                    throw new RuntimeException('Kinship rejected cross-workspace group membership.');
+                }
 
-        $candidateIds = $values->filter(fn (mixed $value): bool => is_int($value) || is_string($value));
-        $names = $values->filter(fn (mixed $value): bool => is_string($value));
+                if ($value->getKey() !== null) {
+                    $resolved[] = $value->getKey();
+                }
 
-        $query = $this->scopeKinshipRoleQuery($roleClass::query());
-        $keyName = (new $roleClass)->getKeyName();
+                continue;
+            }
 
-        return $query
-            ->where(function (Builder $query) use ($candidateIds, $names, $keyName): void {
-                $query->whereIn($keyName, $candidateIds->all())
-                    ->orWhereIn('name', $names->all())
-                    ->orWhereIn('label', $names->all());
-            })
-            ->pluck($keyName)
-            ->merge($ids)
-            ->unique()
-            ->values()
-            ->all();
+            if (! is_int($value) && ! (is_string($value) && trim($value) !== '')) {
+                continue;
+            }
+
+            $matches = $groupClass::query()
+                ->where($configuration->groupForeignKey(), $scope)
+                ->where(function (Builder $candidate) use ($keyName, $value): void {
+                    $candidate->where($keyName, $value);
+                    if (is_string($value)) {
+                        foreach ($this->kinshipGroupLookupColumns() as $column) {
+                            if ($column !== $keyName) {
+                                $candidate->orWhere($column, $value);
+                            }
+                        }
+                    }
+                })
+                ->pluck($keyName)
+                ->unique()
+                ->values();
+
+            if ($matches->count() > 1) {
+                throw new RuntimeException("Ambiguous Kinship group reference [{$value}]. Pass a Group model instead.");
+            }
+
+            if ($matches->isNotEmpty()) {
+                $resolved[] = $matches->first();
+            }
+        }
+
+        return collect($resolved)->unique()->values()->all();
     }
 
     /**
@@ -467,70 +656,65 @@ trait HasRolesAndPermissions
     {
         $permissionClass = KinshipModels::permission();
         $values = collect($permissions)->flatten();
-        if ($values->isEmpty()) {
-            return [];
+        $keyName = (new $permissionClass)->getKeyName();
+        $resolved = [];
+
+        foreach ($values as $value) {
+            if ($value instanceof $permissionClass) {
+                if ($value->getKey() !== null) {
+                    $resolved[] = $value->getKey();
+                }
+
+                continue;
+            }
+
+            if (! is_int($value) && ! (is_string($value) && trim($value) !== '')) {
+                continue;
+            }
+
+            $matches = $permissionClass::query()
+                ->where(function (Builder $candidate) use ($keyName, $value): void {
+                    $candidate->where($keyName, $value);
+                    if (is_string($value)) {
+                        $candidate->orWhere('name', $value)->orWhere('label', $value);
+                    }
+                })
+                ->pluck($keyName)
+                ->unique()
+                ->values();
+
+            if ($matches->count() > 1) {
+                throw new RuntimeException("Ambiguous Kinship permission reference [{$value}]. Pass a Permission model instead.");
+            }
+
+            if ($matches->isNotEmpty()) {
+                $resolved[] = $matches->first();
+            }
         }
 
-        $ids = $values
-            ->filter(fn (mixed $value): bool => $value instanceof $permissionClass)
-            ->filter(fn (Permission $value): bool => $value->guard_name === $this->kinshipGuardName())
-            ->map(fn (Permission $value): mixed => $value->getKey());
-
-        $candidateIds = $values->filter(fn (mixed $value): bool => is_int($value) || is_string($value));
-        $names = $values->filter(fn (mixed $value): bool => is_string($value));
-        $keyName = (new $permissionClass)->getKeyName();
-
-        return $permissionClass::query()
-            ->where('guard_name', $this->kinshipGuardName())
-            ->where(function (Builder $query) use ($candidateIds, $names, $keyName): void {
-                $query->whereIn($keyName, $candidateIds->all())
-                    ->orWhereIn('name', $names->all())
-                    ->orWhereIn('label', $names->all());
-            })
-            ->pluck($keyName)
-            ->merge($ids)
-            ->unique()
-            ->values()
-            ->all();
+        return collect($resolved)->unique()->values()->all();
     }
 
     private function roleCollectionContains(mixed $needle): bool
     {
-        $acting = $this->getActingRole();
-        $roles = $acting !== null && $this->kinshipActingRoleMode() === 'replace'
-            ? []
-            : $this->roles()->getQuery()->get()->all();
+        $granted = $this->kinshipEffectiveRoleSet();
 
-        if ($acting !== null) {
-            $roles[] = $acting;
+        if ($needle instanceof Role) {
+            $key = $needle->getKey();
+
+            return $key !== null
+                && $this->roleMatchesContext($needle)
+                && isset($granted['id:'.(string) $key]);
         }
 
-        foreach ($roles as $role) {
-            if (! $role instanceof Role) {
-                continue;
-            }
+        if (is_int($needle)) {
+            return isset($granted['id:'.(string) $needle]);
+        }
 
-            if ($needle instanceof Role) {
-                if ($needle->is($role)) {
-                    return true;
-                }
-
-                continue;
-            }
-
-            if (is_int($needle) || is_string($needle)) {
-                if ((string) $needle === (string) $role->getKey()) {
-                    return true;
-                }
-
-                if (is_int($needle)) {
-                    continue;
-                }
-            }
-
-            if (is_string($needle) && ($needle === $role->name || $needle === $role->label)) {
-                return true;
-            }
+        if (is_string($needle)) {
+            return isset($granted['id:'.$needle])
+                || isset($granted['name:'.$needle])
+                || isset($granted['label:'.$needle]);
         }
 
         return false;
@@ -541,10 +725,33 @@ trait HasRolesAndPermissions
         return $needle instanceof Role || is_int($needle) || (is_string($needle) && $needle !== '');
     }
 
+    private function validGroupNeedle(mixed $needle): bool
+    {
+        $groupClass = KinshipModels::group();
+
+        return $needle instanceof $groupClass || is_int($needle) || (is_string($needle) && $needle !== '');
+    }
+
+    /** @return list<string> */
+    private function kinshipGroupLookupColumns(): array
+    {
+        $columns = config('kinship.group.lookup_columns', ['name', 'label']);
+
+        if (! is_array($columns)) {
+            throw new RuntimeException('Kinship group.lookup_columns must be an array.');
+        }
+
+        return collect($columns)
+            ->filter(fn (mixed $column): bool => is_string($column) && trim($column) !== '')
+            ->map(fn (string $column): string => trim($column))
+            ->unique()
+            ->values()
+            ->all();
+    }
+
     private function roleMatchesContext(Role $role): bool
     {
-        return $role->guard_name === $this->kinshipGuardName()
-            && $this->sameKinshipWorkspace($role);
+        return $this->sameKinshipWorkspace($role);
     }
 
     /**
@@ -556,11 +763,40 @@ trait HasRolesAndPermissions
         return collect($permissions)
             ->flatten()
             ->map(fn (mixed $permission): string => $permission instanceof Permission
-                ? ($permission->guard_name === $this->kinshipGuardName() ? (string) $permission->name : '')
+                ? (string) $permission->name
                 : (is_string($permission) ? $permission : ''))
             ->filter(fn (string $permission): bool => $permission !== '')
             ->unique()
             ->values();
+    }
+
+    private function kinshipWorkspaceScope(): string
+    {
+        $configuration = app(WorkspaceConfiguration::class);
+        $scope = $this->kinshipAuthorizationContext()->workspaceScope($configuration);
+
+        if ($scope === null) {
+            throw new RuntimeException('Kinship cannot mutate permissions without a resolved workspace context.');
+        }
+
+        return $scope;
+    }
+
+    /**
+     * @param  list<int|string>  $ids
+     * @return array<int|string, array<string, string>>
+     */
+    private function permissionPivotPayload(array $ids): array
+    {
+        $scopeKey = app(WorkspaceConfiguration::class)->roleForeignKey();
+        $scope = $this->kinshipWorkspaceScope();
+        $payload = [];
+
+        foreach ($ids as $id) {
+            $payload[$id] = [$scopeKey => $scope];
+        }
+
+        return $payload;
     }
 
     private function kinshipActingRoleSessionKey(): string
@@ -593,7 +829,7 @@ trait HasRolesAndPermissions
 
     private function invalidateKinshipSharedCache(): void
     {
-        app(PermissionCacheInvalidator::class)->invalidateSubject($this, $this->kinshipGuardName());
+        app(PermissionCacheInvalidator::class)->invalidateSubject($this, $this->kinshipAuthorizationContext());
     }
 
     /** @return list<string> */
@@ -603,17 +839,32 @@ trait HasRolesAndPermissions
     }
 
     /** @return array<string, true> */
-    private function kinshipPermissionSet(): array
+    private function kinshipEffectiveRoleSet(): array
     {
-        $contextKey = $this->kinshipContextFingerprint();
+        $acting = $this->getActingRole();
+        $tokens = $acting !== null && $this->kinshipActingRoleMode() === 'replace'
+            ? []
+            : app(EffectiveRoleResolver::class)->resolve($this, $this->kinshipAuthorizationContext());
 
-        if (! array_key_exists($contextKey, $this->kinshipPermissionSetCache)) {
-            $this->kinshipPermissionSetCache[$contextKey] = array_fill_keys(
-                $this->allPermissionNames()->all(),
-                true,
-            );
+        if ($acting !== null) {
+            $key = $acting->getKey();
+            if ($key !== null) {
+                $tokens[] = 'id:'.(string) $key;
+            }
+            if (is_string($acting->name) && $acting->name !== '') {
+                $tokens[] = 'name:'.$acting->name;
+            }
+            if (is_string($acting->label) && $acting->label !== '') {
+                $tokens[] = 'label:'.$acting->label;
+            }
         }
 
-        return $this->kinshipPermissionSetCache[$contextKey];
+        return array_fill_keys(array_values(array_unique($tokens)), true);
+    }
+
+    /** @return array<string, true> */
+    private function kinshipPermissionSet(): array
+    {
+        return array_fill_keys($this->allPermissionNames()->all(), true);
     }
 }

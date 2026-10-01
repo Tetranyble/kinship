@@ -5,18 +5,13 @@ namespace Tetranyble\Kinship\Support;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Tetranyble\Kinship\Contracts\AuthorizationContextResolver;
-use Tetranyble\Kinship\Contracts\GuardResolver;
+use Tetranyble\Kinship\Contracts\Group as GroupContract;
 
 trait ResolvesKinshipContext
 {
-    protected function kinshipGuardName(): string
-    {
-        return app(GuardResolver::class)->resolve($this);
-    }
-
     protected function kinshipAuthorizationContext(): AuthorizationContext
     {
-        return app(AuthorizationContextResolver::class)->resolve($this, $this->kinshipGuardName());
+        return app(AuthorizationContextResolver::class)->resolve($this);
     }
 
     /**
@@ -26,9 +21,7 @@ trait ResolvesKinshipContext
     protected function scopeKinshipRoleQuery(Builder $query): Builder
     {
         $configuration = app(WorkspaceConfiguration::class);
-        $context = $this->kinshipAuthorizationContext();
-        $scope = $context->workspaceScope($configuration);
-        $query->where('guard_name', $context->guard);
+        $scope = $this->kinshipAuthorizationContext()->workspaceScope($configuration);
 
         if ($scope === null) {
             $query->whereRaw('1 = 0');
@@ -42,9 +35,10 @@ trait ResolvesKinshipContext
     protected function sameKinshipWorkspace(Model $role): bool
     {
         $configuration = app(WorkspaceConfiguration::class);
-        $context = $this->kinshipAuthorizationContext();
-        $expected = $context->workspaceScope($configuration);
-        $actual = $role->getAttribute($configuration->roleForeignKey());
+        $expected = $this->kinshipAuthorizationContext()->workspaceScope($configuration);
+        $actual = $role instanceof GroupContract
+            ? $role->getKinshipWorkspaceIdentifier()
+            : $role->getAttribute($configuration->roleForeignKey());
 
         return $expected !== null && is_scalar($actual) && (string) $actual === $expected;
     }

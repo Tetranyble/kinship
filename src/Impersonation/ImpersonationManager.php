@@ -11,7 +11,6 @@ use Illuminate\Contracts\Session\Session;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
-use Tetranyble\Kinship\Contracts\GuardResolver;
 use Tetranyble\Kinship\Contracts\ImpersonationAuthorizer;
 use Tetranyble\Kinship\Events\UserImpersonationStarted;
 use Tetranyble\Kinship\Events\UserImpersonationStopped;
@@ -22,7 +21,6 @@ final class ImpersonationManager
     public function __construct(
         private readonly AuthManager $auth,
         private readonly Session $session,
-        private readonly GuardResolver $guards,
         private readonly ImpersonationAuthorizer $authorizer,
         private readonly Dispatcher $events,
     ) {}
@@ -44,7 +42,7 @@ final class ImpersonationManager
             throw new ImpersonationException('Nested user impersonation is not allowed.');
         }
 
-        $guardName = $this->guards->resolve(requestedGuard: $guard);
+        $guardName = $this->resolveAuthGuard($guard);
         $statefulGuard = $this->statefulGuard($guardName);
         $actor = $statefulGuard->user();
 
@@ -85,7 +83,7 @@ final class ImpersonationManager
     ): ImpersonationState {
         $this->assertEnabled();
 
-        $guardName = $this->guards->resolve(requestedGuard: $guard);
+        $guardName = $this->resolveAuthGuard($guard);
         $authenticatedActor = $this->auth->guard($guardName)->user();
 
         if (! $authenticatedActor instanceof Authenticatable || ! $this->sameUser($authenticatedActor, $actor)) {
@@ -188,7 +186,8 @@ final class ImpersonationManager
      */
     public function discardInvalidState(): void
     {
-        $guardName = $this->guards->resolve();
+        $state = $this->state();
+        $guardName = $state !== null ? $state->guard : $this->resolveAuthGuard();
         $guard = $this->auth->guard($guardName);
 
         if ($guard instanceof StatefulGuard) {
@@ -197,6 +196,25 @@ final class ImpersonationManager
 
         $this->session->forget($this->sessionKey());
         $this->session->regenerate(true);
+    }
+
+    private function resolveAuthGuard(?string $requested = null): string
+    {
+        if (is_string($requested) && trim($requested) !== '') {
+            return trim($requested);
+        }
+
+        $guard = $this->auth->getDefaultDriver();
+        if (is_string($guard) && trim($guard) !== '') {
+            return trim($guard);
+        }
+
+        $configured = config('auth.defaults.guard');
+        if (is_string($configured) && trim($configured) !== '') {
+            return trim($configured);
+        }
+
+        throw new ImpersonationException('Kinship impersonation requires an active Laravel authentication guard.');
     }
 
     private function assertEnabled(): void
@@ -277,7 +295,7 @@ final class ImpersonationManager
             throw new InvalidArgumentException("The impersonation reason must not exceed {$maximum} bytes.");
         }
 
-        if (! $this->authorizer->authorize($actor, $target, $guard)) {
+        if (! $this->authorizer->authorize($actor, $target)) {
             throw new AuthorizationException('This user is not authorized to impersonate the target account.');
         }
 

@@ -8,6 +8,7 @@ namespace Illuminate\Database\Eloquent;
  * @method $this whereIn(string $column, mixed $values)
  * @method $this orWhereIn(string $column, mixed $values)
  * @method $this whereRaw(string $sql, array<mixed> $bindings = [], string $boolean = 'and')
+ * @method $this withTrashed(bool $withTrashed = true)
  * @method bool exists()
  */
 class Builder
@@ -40,6 +41,7 @@ class BelongsTo
  * @template TRelatedModel
  * @template TDeclaringModel
  * @template TPivotModel
+ * @template TAccessor of string = 'pivot'
  */
 class BelongsToMany
 {

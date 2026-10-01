@@ -16,7 +16,6 @@ final class TeamPermissionGrantSource implements PermissionGrantSource
             ->join('permission_team as pt', 'pt.team_id', '=', 'tu.team_id')
             ->join('permissions as p', 'p.id', '=', 'pt.permission_id')
             ->where('tu.user_id', $subject->getKey())
-            ->where('p.guard_name', $context->guard)
             ->whereNull('p.deleted_at')
             ->select('p.name as name');
     }

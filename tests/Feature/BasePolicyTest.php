@@ -22,7 +22,6 @@ class BasePolicyTest extends PackageTestCase
             'name' => 'sample_record.update',
             'label' => 'Update sample records',
             'group' => 'sample_record',
-            'guard_name' => 'web',
         ]);
         $policy = new class extends BasePolicy
         {

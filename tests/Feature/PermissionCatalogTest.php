@@ -41,7 +41,6 @@ class PermissionCatalogTest extends PackageTestCase
             'name' => 'user.index',
             'label' => 'User View All',
             'group' => 'user',
-            'guard_name' => 'web',
         ]);
     }
 
@@ -53,7 +52,6 @@ class PermissionCatalogTest extends PackageTestCase
             'name' => 'external.export',
             'label' => 'External Export',
             'group' => 'external',
-            'guard_name' => 'web',
         ]);
         $viewer = $this->role('viewer');
         $viewer->givePermissionTo($external);

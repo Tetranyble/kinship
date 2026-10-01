@@ -5,6 +5,7 @@ namespace Tetranyble\Kinship\Tests;
 use Orchestra\Testbench\TestCase;
 use Tetranyble\Kinship\KinshipServiceProvider;
 use Tetranyble\Kinship\Tests\Fixtures\User;
+use Tetranyble\Kinship\Tests\Fixtures\Workspace;
 
 abstract class PackageTestCase extends TestCase
 {
@@ -25,6 +26,7 @@ abstract class PackageTestCase extends TestCase
         $app['config']->set('auth.defaults.guard', 'web');
         $app['config']->set('auth.providers.users.model', User::class);
         $app['config']->set('kinship.models.user', User::class);
+        $app['config']->set('kinship.models.workspace', Workspace::class);
         $app['config']->set('session.driver', 'array');
         $app['config']->set('cache.default', 'array');
     }

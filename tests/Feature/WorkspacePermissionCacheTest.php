@@ -48,6 +48,57 @@ class WorkspacePermissionCacheTest extends WorkspacePackageTestCase
         $this->assertCount(1, DB::getQueryLog()); // workspace-one grant cache was invalidated
     }
 
+    public function test_direct_permissions_are_scoped_to_the_current_workspace(): void
+    {
+        $user = WorkspaceUser::query()->create([
+            'name' => 'Ada',
+            'email' => 'ada@example.test',
+            'workspace_id' => 10,
+        ]);
+        $permission = $this->permission('invoice.approve');
+
+        $user->assignPermissions($permission);
+        $this->assertTrue($user->hasPermission('invoice.approve'));
+        $this->assertDatabaseHas('permission_user', [
+            'permission_id' => $permission->id,
+            'user_id' => $user->id,
+            'workspace_id' => '10',
+        ]);
+
+        $user->setAttribute('workspace_id', 20);
+        $this->assertFalse($user->hasPermission('invoice.approve'));
+
+        $user->assignPermissions($permission);
+        $this->assertTrue($user->hasPermission('invoice.approve'));
+        $this->assertDatabaseHas('permission_user', [
+            'permission_id' => $permission->id,
+            'user_id' => $user->id,
+            'workspace_id' => '20',
+        ]);
+    }
+
+    public function test_direct_relationship_attach_automatically_writes_the_current_workspace_scope(): void
+    {
+        $user = WorkspaceUser::query()->create([
+            'name' => 'Ada',
+            'email' => 'ada@example.test',
+            'workspace_id' => 10,
+        ]);
+        $permission = $this->permission('invoice.export');
+
+        $user->userPermissions()->attach($permission->id);
+
+        $this->assertDatabaseHas('permission_user', [
+            'permission_id' => $permission->id,
+            'user_id' => $user->id,
+            'workspace_id' => '10',
+        ]);
+        $this->assertTrue($user->hasPermission('invoice.export'));
+
+        $user->setAttribute('workspace_id', 20);
+        $this->assertFalse($user->hasPermission('invoice.export'));
+    }
+
     private function permission(string $name): Permission
     {
         return Permission::query()->create([

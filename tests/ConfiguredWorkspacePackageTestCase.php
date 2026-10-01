@@ -13,12 +13,13 @@ abstract class ConfiguredWorkspacePackageTestCase extends PackageTestCase
 
         $app['config']->set('auth.providers.users.model', MappedWorkspaceUser::class);
         $app['config']->set('kinship.models.user', MappedWorkspaceUser::class);
+        $app['config']->set('kinship.models.workspace', Workspace::class);
         $app['config']->set('kinship.workspace.mapping', [
-            'model' => Workspace::class,
             'relationship' => 'workspace',
             'subject_foreign_key' => 'organization_id',
             'workspace_owner_key' => 'id',
             'role_foreign_key' => 'organization_scope_id',
+            'group_foreign_key' => 'organization_group_scope_id',
         ]);
     }
 }

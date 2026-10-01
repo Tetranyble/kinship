@@ -4,8 +4,8 @@ namespace Tetranyble\Kinship\Concerns;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use RuntimeException;
 use Tetranyble\Kinship\Contracts\Workspace;
+use Tetranyble\Kinship\Support\KinshipModels;
 use Tetranyble\Kinship\Support\WorkspaceConfiguration;
 
 trait BelongsToWorkspace
@@ -30,22 +30,12 @@ trait BelongsToWorkspace
     public function kinshipWorkspace(): BelongsTo
     {
         $configuration = app(WorkspaceConfiguration::class);
-        $mapping = $configuration->mapping;
-
-        if ($mapping === null) {
-            throw new RuntimeException('BelongsToWorkspace requires a complete Kinship workspace mapping.');
-        }
-
-        $workspaceModel = $mapping->model;
-
-        if (! is_a($workspaceModel, Workspace::class, true)) {
-            throw new RuntimeException('The Kinship workspace model used by BelongsToWorkspace must implement '.Workspace::class.'.');
-        }
+        $workspaceModel = KinshipModels::workspace();
 
         return $this->belongsTo(
             $workspaceModel,
             $configuration->subjectForeignKey(),
-            $mapping->workspaceOwnerKey,
+            $configuration->workspaceOwnerKey(),
         );
     }
 }

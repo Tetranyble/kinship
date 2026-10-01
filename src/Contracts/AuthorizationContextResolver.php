@@ -7,5 +7,5 @@ use Tetranyble\Kinship\Support\AuthorizationContext;
 
 interface AuthorizationContextResolver
 {
-    public function resolve(Model $subject, string $guard): AuthorizationContext;
+    public function resolve(Model $subject): AuthorizationContext;
 }

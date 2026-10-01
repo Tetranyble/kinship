@@ -1,16 +1,16 @@
 # Kinship
 
-Kinship is a guard-aware role and permission package for Laravel 9–13 on PHP 8.2 or newer. Workspace authorization is optional: ordinary applications only add the user concern, while workspace applications can opt in with a small model contract, configuration mapping, or a custom resolver.
+Kinship is a role and permission package for Laravel 9–13 on PHP 8.2 or newer. Workspace authorization is optional: ordinary applications only add the user concern, while workspace applications can opt in with a small model contract, configuration mapping, or a custom resolver.
 
 ## Design guarantees
 
-- Workspace behavior is off unless a subject contract, complete mapping, or explicit configuration enables it.
-- Every authorization operation is scoped by an immutable guard/workspace context.
+- Workspace behavior is off unless a subject contract, mapping override, or explicit configuration enables it.
+- Every authorization operation is scoped by an immutable workspace context.
 - Permission and acting-role caches are isolated by that context.
 - A workspace-aware user without a resolved workspace fails closed.
 - The roles schema is stable in both application modes and supports integer, UUID, ULID, and string workspace identifiers.
 - Role and permission soft deletion is enforced by the models.
-- Host applications own their user and workspace models.
+- Host applications own their user and workspace models and may also supply their own group/access-group model.
 
 For deeper treatment, see:
 
@@ -20,6 +20,7 @@ For deeper treatment, see:
 - [Workspace integration](docs/workspaces.md)
 - [Configuration and schema](docs/configuration.md)
 - [Release process](docs/releasing.md)
+- [Upgrading to 2.x](docs/upgrading-v2.md)
 
 ## Installation
 
@@ -148,7 +149,7 @@ class User extends Authenticatable
 }
 ```
 
-No workspace interface or relationship is required. Roles created without a workspace value are stored in Kinship's internal global scope and are unique by name, guard, and that scope.
+No workspace interface or relationship is required. Roles created without a workspace value are stored in Kinship's internal global scope and are unique by name and that scope.
 
 ```php
 use Tetranyble\Kinship\Models\Permission;
@@ -157,14 +158,12 @@ use Tetranyble\Kinship\Models\Role;
 $manager = Role::create([
     'name' => 'manager',
     'label' => 'Manager',
-    'guard_name' => 'web',
 ]);
 
 $approve = Permission::create([
     'name' => 'loan.approve',
     'label' => 'Approve loans',
     'group' => 'loan',
-    'guard_name' => 'web',
 ]);
 
 $manager->givePermissionTo($approve);
@@ -193,34 +192,41 @@ class User extends Authenticatable implements WorkspaceSubject
 }
 ```
 
-Any host Eloquent model can mark itself as a workspace:
-
-```php
-use Illuminate\Database\Eloquent\Model;
-use Tetranyble\Kinship\Contracts\Workspace as WorkspaceContract;
-
-class Organization extends Model implements WorkspaceContract
-{
-    public function getWorkspaceIdentifier(): int|string
-    {
-        return $this->getKey();
-    }
-}
-```
-
-Relationships are conveniences, not domain requirements. For the common belongs-to design, configure the model and keys, then use the supplied traits:
+The host application owns the workspace model. Configure it once and opt it into Kinship with the small workspace contract:
 
 ```php
 // config/kinship.php
+'models' => [
+    'workspace' => App\Models\Workspace::class,
+],
+```
+
+```php
+use Illuminate\Database\Eloquent\Model;
+use Tetranyble\Kinship\Concerns\IsWorkspace;
+use Tetranyble\Kinship\Contracts\Workspace as WorkspaceContract;
+
+class Workspace extends Model implements WorkspaceContract
+{
+    use IsWorkspace;
+}
+```
+
+The trait is optional; applications may implement only `getWorkspaceIdentifier()` when they already own their relationships or use a non-standard key.
+
+Relationships are conveniences, not domain requirements. For the conventional `workspace_id` design, no model mapping is repeated:
+
+```php
+// config/kinship.php
+'models' => [
+    'workspace' => App\Models\Workspace::class,
+],
+
 'workspace' => [
     'enabled' => null,
-    'mapping' => [
-        'model' => App\Models\Organization::class,
-        'relationship' => 'organization',
-        'subject_foreign_key' => 'organization_id',
-        'workspace_owner_key' => 'id',
-        'role_foreign_key' => 'organization_id',
-    ],
+    'subject_foreign_key' => 'workspace_id',
+    'role_foreign_key' => 'workspace_id',
+    'group_foreign_key' => 'workspace_id',
 ],
 ```
 
@@ -231,17 +237,17 @@ class User extends Authenticatable implements WorkspaceSubject
     use \Tetranyble\Kinship\Concerns\BelongsToWorkspace;
 }
 
-class Organization extends Model implements WorkspaceContract
+class Workspace extends Model implements WorkspaceContract
 {
     use \Tetranyble\Kinship\Concerns\IsWorkspace;
 }
 ```
 
-The traits provide `kinshipWorkspace()`, `kinshipUsers()`, and `kinshipRoles()` without forcing those methods into the identity contracts.
+The traits provide `kinshipWorkspace()`, `kinshipUsers()`, `kinshipRoles()`, and `kinshipGroups()` without forcing those methods into the identity contracts.
 
 ## Configuration-only workspace mapping
 
-Applications that cannot modify their user model can provide the complete mapping shown above. Kinship reads the configured foreign key first and falls back to the configured relationship. A partial mapping throws during startup/use instead of silently weakening authorization.
+Applications that cannot modify their user model can configure only the non-standard relationship/key names they need. The workspace model still comes exclusively from `kinship.models.workspace`; it is never duplicated in the mapping block. Kinship reads the mapped foreign key first and, when configured, falls back to the mapped relationship.
 
 ## Custom workspace resolution
 
@@ -289,17 +295,69 @@ $user->hasAnyPermission('loan.view', 'loan.approve');
 $user->hasAllPermissions('loan.view', 'loan.approve');
 ```
 
-`roles()` is guard/workspace scoped. `allRoles()` is the explicitly named unscoped persistence relationship and should not be used for authorization decisions.
+`roles()` is workspace scoped. `allRoles()` is the explicitly named unscoped persistence relationship and should not be used for authorization decisions.
 
-Permissions are global definitions scoped by guard. Direct user permissions therefore apply across that user's workspaces for the same guard; use role permissions when the grant must vary per workspace.
+Permissions are global definitions unique by name. Direct user permissions are stored with the current workspace scope, so a grant in one workspace cannot leak into another workspace.
 
-Permission checks resolve direct and role grants through one SQL `UNION`, then cache the flattened names through Laravel's configured cache store. A warm check on a fresh user instance performs no authorization query. Applications can append a `PermissionGrantSource` for teams or any other domain-owned grant mechanism without adding team schema to Kinship. See [Permission caching and grant sources](docs/caching-and-sources.md).
+Permission checks resolve direct user grants, user roles, group permissions, and group roles through one SQL `UNION`, then cache the flattened names through Laravel's configured cache store. A warm check on a fresh user instance performs no authorization query. Effective role checks are cached with the same versioned strategy. Applications can still append additional `PermissionGrantSource` implementations for domain-owned grant mechanisms. See [Permission caching and grant sources](docs/caching-and-sources.md).
+
+## Tenant-scoped groups
+
+The workspace identifier remains Kinship's multi-tenancy boundary. Groups are access/IAM groups *inside* a workspace; they do not replace workspaces or implicitly model departments, branches, projects, or other host-domain structures.
+
+Kinship ships a conventional `Group` model, but applications may use an existing model such as `Team`, `AccessGroup`, or `SecurityGroup` without extending Kinship's model:
+
+```php
+// config/kinship.php
+'models' => [
+    'group' => App\Models\Team::class,
+],
+
+'workspace' => [
+    'group_foreign_key' => 'tenant_id',
+],
+
+'group' => [
+    'lookup_columns' => ['code'],
+],
+```
+
+```php
+use Illuminate\Database\Eloquent\Model;
+use Tetranyble\Kinship\Concerns\IsGroup;
+use Tetranyble\Kinship\Contracts\Group as GroupContract;
+
+class Team extends Model implements GroupContract
+{
+    use IsGroup;
+
+    protected $table = 'access_teams';
+}
+```
+
+The `Group` contract requires only a stable group identifier and workspace identifier. `name`, `label`, `description`, `is_system`, timestamps, soft deletes, the literal `workspace_id` column name, and BIGINT identifiers are **not** authorization requirements. The default migration supplies those conventional fields; applications integrating an existing schema should publish/adapt the migrations (or disable package migration loading) and map their column names.
+
+```php
+$credit = Group::create([
+    'name' => 'credit-operations',
+    'workspace_id' => $workspace->getKey(),
+]);
+
+$credit->assignRoles('loan-reviewer');
+$credit->givePermissionTo('customer.view');
+$credit->addMembers($ada, $leonard);
+
+$leonard->hasRole('loan-reviewer'); // inherited
+$leonard->hasPermission('customer.view'); // inherited
+```
+
+A subject may be provisioned into groups in several tenants, but authorization activates only memberships whose group's workspace equals the current authorization workspace. User-side `assignGroups()`/`syncGroups()` resolve groups only in the current workspace. Group-role links are strictly same-workspace. Nested groups and deny rules are intentionally not implemented. See [Groups and inherited authorization](docs/groups.md).
 
 ## Acting roles
 
 ```php
 if ($user->actAs('manager')) {
-    // The acting role is active only for this user, guard, and workspace.
+    // The acting role is active only for this user and workspace.
 }
 
 $user->getActingRole();
@@ -355,7 +413,7 @@ Route::get('/api/reports', ReportController::class)
     ->middleware(['auth:api', 'kinship.permission:report.view']);
 ```
 
-Put Laravel's `auth:<guard>` middleware before Kinship. With `kinship.guard=null`, Laravel selects the guard for the request: `auth:api` evaluates roles and permissions whose `guard_name` is `api`, while `auth:web` evaluates `web`. The middleware expression is `auth:api`; the guard value stored in Kinship and passed to `kinship:seed --guard=api` is only `api`.
+Put Laravel authentication middleware before Kinship so `$request->user()` is established first. The authentication mechanism (`web`, `api`, Sanctum, Passport, JWT, etc.) does not change Kinship authorization: the same subject in the same workspace receives the same grants.
 
 Comma-separated Kinship arguments have any-of semantics. JSON denials return HTTP 403 with `status` and `message` fields.
 
@@ -368,7 +426,7 @@ composer format
 composer check
 ```
 
-The CI matrix covers Laravel 9/Testbench 7 through Laravel 13/Testbench 11. Laravel 9 is supported for compatibility, but it is upstream end-of-life; applications must assess unresolved framework advisories and plan an upgrade.
+The test suite includes schema-contract checks, workspace contract/trait integration, non-standard workspace/group foreign keys, host-owned group models, tenant isolation, group inheritance, cache invalidation, warm-cache zero-query behavior, middleware, catalog, acting roles, and impersonation. The CI matrix covers Laravel 9/Testbench 7 through Laravel 13/Testbench 11. Laravel 9 is supported for compatibility, but it is upstream end-of-life; applications must assess unresolved framework advisories and plan an upgrade.
 
 ## License
 

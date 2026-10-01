@@ -5,6 +5,8 @@ namespace Tetranyble\Kinship\Cache;
 use Closure;
 use Illuminate\Database\Eloquent\Model;
 use Tetranyble\Kinship\Contracts\PermissionCacheStore;
+use Tetranyble\Kinship\Support\AuthorizationContext;
+use Tetranyble\Kinship\Support\WorkspaceConfiguration;
 
 final class PermissionCacheInvalidator
 {
@@ -16,21 +18,30 @@ final class PermissionCacheInvalidator
     public function __construct(
         private readonly PermissionCacheStore $cache,
         private readonly PermissionCacheKeys $keys,
+        private readonly WorkspaceConfiguration $workspaces,
     ) {}
 
-    public function invalidateGuard(string $guard): void
+    public function invalidateDefinitions(): void
     {
-        $this->rotate($this->keys->guardVersion($guard));
+        $this->rotate($this->keys->definitionsVersion());
     }
 
-    public function invalidateScope(string $guard, string $scope): void
+    public function invalidateScope(string $scope): void
     {
-        $this->rotate($this->keys->scopeVersion($guard, $scope));
+        $this->rotate($this->keys->scopeVersion($scope));
     }
 
-    public function invalidateSubject(Model $subject, string $guard): void
+    public function invalidateSubject(Model $subject, AuthorizationContext $context): void
     {
-        $this->rotate($this->keys->subjectVersion($subject, $guard));
+        $scope = $context->workspaceScope($this->workspaces);
+        if ($scope !== null) {
+            $this->rotate($this->keys->subjectVersion($subject, $scope));
+        }
+    }
+
+    public function invalidateSubjectScope(Model $subject, string $scope): void
+    {
+        $this->rotate($this->keys->subjectVersion($subject, $scope));
     }
 
     public function batch(Closure $callback): mixed

@@ -20,17 +20,18 @@ final class WorkspaceMode
         return self::configuration()->mapping !== null;
     }
 
-    /** @return array{model: mixed, relationship: mixed, subject_foreign_key: mixed, workspace_owner_key: mixed, role_foreign_key: mixed} */
+    /** @return array{model: mixed, relationship: mixed, subject_foreign_key: mixed, workspace_owner_key: mixed, role_foreign_key: mixed, group_foreign_key: mixed} */
     public static function mapping(): array
     {
         $configuration = self::configuration();
 
         return $configuration->mapping?->toArray() ?? [
-            'model' => null,
+            'model' => config('kinship.models.workspace'),
             'relationship' => null,
             'subject_foreign_key' => $configuration->defaultSubjectForeignKey,
-            'workspace_owner_key' => 'id',
+            'workspace_owner_key' => null,
             'role_foreign_key' => $configuration->defaultRoleForeignKey,
+            'group_foreign_key' => $configuration->defaultGroupForeignKey,
         ];
     }
 
@@ -42,6 +43,11 @@ final class WorkspaceMode
     public static function roleForeignKey(): string
     {
         return self::configuration()->roleForeignKey();
+    }
+
+    public static function groupForeignKey(): string
+    {
+        return self::configuration()->groupForeignKey();
     }
 
     private static function configuration(): WorkspaceConfiguration

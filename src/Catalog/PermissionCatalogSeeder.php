@@ -22,7 +22,6 @@ final class PermissionCatalogSeeder
     ) {}
 
     public function seed(
-        string $guard,
         int|string|null $workspaceIdentifier = null,
         bool $workspaceScoped = false,
         bool $sync = false,
@@ -30,11 +29,6 @@ final class PermissionCatalogSeeder
     ): CatalogSeedResult {
         if (! (bool) config('kinship.catalog.enabled', false)) {
             throw new RuntimeException('Kinship catalog seeding is disabled. Set kinship.catalog.enabled to true first.');
-        }
-
-        $guard = trim($guard);
-        if ($guard === '') {
-            throw new RuntimeException('Kinship catalog seeding requires a non-empty guard.');
         }
 
         $scope = $this->workspaces->scopeValue($workspaceIdentifier, $workspaceScoped);
@@ -62,7 +56,6 @@ final class PermissionCatalogSeeder
 
         return $this->cache->batch(fn (): CatalogSeedResult => DB::connection($roleModel->getConnectionName())->transaction(function () use (
             $assignments,
-            $guard,
             $matrix,
             $permissionClass,
             $permissions,
@@ -78,7 +71,6 @@ final class PermissionCatalogSeeder
                 $permission = $permissionClass::query()
                     ->withoutGlobalScope(SoftDeletingScope::class)
                     ->where('name', $definition->name)
-                    ->where('guard_name', $guard)
                     ->first() ?? new $permissionClass;
 
                 if (! $permission instanceof Permission) {
@@ -89,7 +81,6 @@ final class PermissionCatalogSeeder
                     'name' => $definition->name,
                     'label' => $definition->label,
                     'group' => $definition->group,
-                    'guard_name' => $guard,
                 ])->save();
 
                 if ($permission->trashed()) {
@@ -108,7 +99,6 @@ final class PermissionCatalogSeeder
                 $role = $roleClass::query()
                     ->withoutGlobalScope(SoftDeletingScope::class)
                     ->where('name', $definition->name)
-                    ->where('guard_name', $guard)
                     ->where($workspaceColumn, $scope)
                     ->first() ?? new $roleClass;
 
@@ -122,7 +112,6 @@ final class PermissionCatalogSeeder
                     'description' => $definition->description,
                     'order' => $definition->order,
                     'is_system' => $definition->system,
-                    'guard_name' => $guard,
                     $workspaceColumn => $scope,
                 ])->save();
 
@@ -140,7 +129,7 @@ final class PermissionCatalogSeeder
                     : $role->permissions()->syncWithoutDetaching($ids);
                 $attached += count($changes['attached']);
                 $detached += count($changes['detached']);
-                $this->cache->invalidateScope($guard, $scope);
+                $this->cache->invalidateScope($scope);
             }
 
             return new CatalogSeedResult(

@@ -6,6 +6,7 @@ use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use LogicException;
+use Tetranyble\Kinship\Contracts\Group as GroupContract;
 use Tetranyble\Kinship\Models\Role;
 use Tetranyble\Kinship\Support\KinshipModels;
 use Tetranyble\Kinship\Support\WorkspaceConfiguration;
@@ -14,9 +15,8 @@ trait IsWorkspace
 {
     public function getWorkspaceIdentifier(): int|string
     {
-        $mapping = app(WorkspaceConfiguration::class)->mapping;
-        $ownerKey = $mapping === null ? $this->getKeyName() : $mapping->workspaceOwnerKey;
-        $value = $this->getAttribute($ownerKey);
+        $configuration = app(WorkspaceConfiguration::class);
+        $value = $this->getAttribute($configuration->workspaceOwnerKey());
 
         if (is_int($value) || is_string($value)) {
             return $value;
@@ -35,14 +35,11 @@ trait IsWorkspace
     public function kinshipUsers(): HasMany
     {
         $configuration = app(WorkspaceConfiguration::class);
-        $ownerKey = $configuration->mapping === null
-            ? $this->getKeyName()
-            : $configuration->mapping->workspaceOwnerKey;
 
         return $this->hasMany(
             KinshipModels::user(),
             $configuration->subjectForeignKey(),
-            $ownerKey,
+            $configuration->workspaceOwnerKey(),
         );
     }
 
@@ -50,14 +47,23 @@ trait IsWorkspace
     public function kinshipRoles(): HasMany
     {
         $configuration = app(WorkspaceConfiguration::class);
-        $ownerKey = $configuration->mapping === null
-            ? $this->getKeyName()
-            : $configuration->mapping->workspaceOwnerKey;
 
         return $this->hasMany(
             KinshipModels::role(),
             $configuration->roleForeignKey(),
-            $ownerKey,
+            $configuration->workspaceOwnerKey(),
+        );
+    }
+
+    /** @return HasMany<Model&GroupContract, $this> */
+    public function kinshipGroups(): HasMany
+    {
+        $configuration = app(WorkspaceConfiguration::class);
+
+        return $this->hasMany(
+            KinshipModels::group(),
+            $configuration->groupForeignKey(),
+            $configuration->workspaceOwnerKey(),
         );
     }
 }

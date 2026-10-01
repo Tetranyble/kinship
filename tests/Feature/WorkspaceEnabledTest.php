@@ -2,6 +2,7 @@
 
 namespace Tetranyble\Kinship\Tests\Feature;
 
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -10,6 +11,7 @@ use Tetranyble\Kinship\Contracts\WorkspaceResolver;
 use Tetranyble\Kinship\Contracts\WorkspaceSubject;
 use Tetranyble\Kinship\Models\Role;
 use Tetranyble\Kinship\Support\WorkspaceMode;
+use Tetranyble\Kinship\Tests\Fixtures\TraitWorkspaceUser;
 use Tetranyble\Kinship\Tests\Fixtures\Workspace;
 use Tetranyble\Kinship\Tests\Fixtures\WorkspaceUser;
 use Tetranyble\Kinship\Tests\WorkspacePackageTestCase;
@@ -52,7 +54,20 @@ class WorkspaceEnabledTest extends WorkspacePackageTestCase
         $this->assertSame(42, $user->getWorkspaceIdentifier());
         $this->assertInstanceOf(HasMany::class, $workspace->kinshipUsers());
         $this->assertInstanceOf(HasMany::class, $workspace->kinshipRoles());
+        $this->assertInstanceOf(HasMany::class, $workspace->kinshipGroups());
         $this->assertInstanceOf(BelongsTo::class, $user->kinshipWorkspace());
+    }
+
+    public function test_belongs_to_workspace_trait_uses_the_configured_workspace_model_without_mapping_duplication(): void
+    {
+        $user = new TraitWorkspaceUser;
+        $user->setAttribute('workspace_id', 42);
+
+        $relationship = $user->kinshipWorkspace();
+
+        $this->assertInstanceOf(Workspace::class, $relationship->getRelated());
+        $this->assertSame('workspace_id', $relationship->getForeignKeyName());
+        $this->assertSame('id', $relationship->getOwnerKeyName());
     }
 
     public function test_subject_relationship_can_resolve_the_workspace_contract(): void
@@ -75,7 +90,6 @@ class WorkspaceEnabledTest extends WorkspacePackageTestCase
         ]);
         $role = Role::query()->create([
             'name' => 'admin',
-            'guard_name' => 'web',
             'workspace_id' => $workspaceId,
         ]);
 
@@ -94,7 +108,6 @@ class WorkspaceEnabledTest extends WorkspacePackageTestCase
         ]);
         $role = Role::query()->create([
             'name' => 'admin',
-            'guard_name' => 'web',
             'workspace_id' => '__kinship_global__',
         ]);
         $user->allRoles()->syncWithoutDetaching([$role->id]);
@@ -103,12 +116,15 @@ class WorkspaceEnabledTest extends WorkspacePackageTestCase
         $this->assertTrue($user->roles()->doesntExist());
     }
 
-    public function test_contract_activation_does_not_hide_a_partial_mapping(): void
+    public function test_configured_workspace_model_must_implement_the_workspace_contract(): void
     {
-        config(['kinship.workspace.mapping.model' => Workspace::class]);
+        config([
+            'kinship.models.workspace' => Model::class,
+            'kinship.workspace.mapping.subject_foreign_key' => 'workspace_id',
+        ]);
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Kinship workspace mapping requires [relationship].');
+        $this->expectExceptionMessage('kinship.models.workspace');
 
         WorkspaceMode::enabled();
     }

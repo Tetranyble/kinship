@@ -6,9 +6,9 @@ use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Schema;
 use Tetranyble\Kinship\Models\Role;
+use Tetranyble\Kinship\Support\WorkspaceConfiguration;
 use Tetranyble\Kinship\Support\WorkspaceMode;
 use Tetranyble\Kinship\Tests\Fixtures\User;
-use Tetranyble\Kinship\Tests\Fixtures\Workspace;
 use Tetranyble\Kinship\Tests\PackageTestCase;
 
 class WorkspaceDisabledTest extends PackageTestCase
@@ -21,17 +21,18 @@ class WorkspaceDisabledTest extends PackageTestCase
         $this->assertFalse(WorkspaceMode::enabled());
         $this->assertTrue(Schema::hasColumn('roles', 'workspace_id'));
         $this->assertFalse(Schema::hasColumn('users', 'workspace_id'));
+        $this->assertFalse(Schema::hasColumn('roles', 'guard_name'));
+        $this->assertFalse(Schema::hasColumn('permissions', 'guard_name'));
+        $this->assertTrue(Schema::hasColumn('permission_user', 'workspace_id'));
 
         $user = User::query()->create(['name' => 'Ada', 'email' => 'ada@example.test']);
         $globalRole = Role::query()->create([
             'name' => 'admin',
             'label' => 'Admin',
-            'guard_name' => 'web',
         ]);
         $scopedRole = Role::query()->create([
             'name' => 'workspace-admin',
             'label' => 'Workspace admin',
-            'guard_name' => 'web',
             'workspace_id' => '99',
         ]);
 
@@ -44,22 +45,23 @@ class WorkspaceDisabledTest extends PackageTestCase
         $this->assertSame([$globalRole->id], $user->roles()->pluck('roles.id')->all());
     }
 
-    public function test_partial_workspace_mapping_is_rejected(): void
+    public function test_workspace_mapping_can_override_only_the_keys_it_needs(): void
     {
-        config(['kinship.workspace.mapping.model' => Workspace::class]);
+        config([
+            'kinship.workspace.enabled' => false,
+            'kinship.workspace.mapping.subject_foreign_key' => 'tenant_id',
+        ]);
 
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Kinship workspace mapping requires [relationship].');
-
-        WorkspaceMode::enabled();
+        $this->assertFalse(WorkspaceMode::enabled());
+        $this->assertSame('tenant_id', WorkspaceConfiguration::fromConfig()->subjectForeignKey());
     }
 
     public function test_global_role_names_are_database_unique(): void
     {
-        Role::query()->create(['name' => 'admin', 'guard_name' => 'web']);
+        Role::query()->create(['name' => 'admin']);
 
         $this->expectException(QueryException::class);
 
-        Role::query()->create(['name' => 'admin', 'guard_name' => 'web']);
+        Role::query()->create(['name' => 'admin']);
     }
 }

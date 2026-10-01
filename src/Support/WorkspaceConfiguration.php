@@ -13,6 +13,7 @@ final readonly class WorkspaceConfiguration
         public ?WorkspaceMapping $mapping,
         public string $defaultSubjectForeignKey,
         public string $defaultRoleForeignKey,
+        public string $defaultGroupForeignKey,
         public string $globalScopeValue,
     ) {}
 
@@ -33,47 +34,60 @@ final readonly class WorkspaceConfiguration
             config('kinship.workspace.role_foreign_key', 'workspace_id'),
             'workspace.role_foreign_key',
         );
+        $defaultGroupKey = self::requiredString(
+            config('kinship.workspace.group_foreign_key', 'workspace_id'),
+            'workspace.group_foreign_key',
+        );
         $globalScope = self::requiredString(
             config('kinship.workspace.global_scope_value', '__kinship_global__'),
             'workspace.global_scope_value',
         );
-        $mapping = self::mappingFrom($raw, $defaultRoleKey);
+        $mapping = self::mappingFrom($raw, $defaultSubjectKey, $defaultRoleKey, $defaultGroupKey);
 
-        return new self($enabled, $mapping, $defaultSubjectKey, $defaultRoleKey, $globalScope);
+        return new self($enabled, $mapping, $defaultSubjectKey, $defaultRoleKey, $defaultGroupKey, $globalScope);
     }
 
     public function enabledFor(?Model $subject = null): bool
     {
-        if (is_bool($this->enabled)) {
-            return $this->enabled;
+        $enabled = is_bool($this->enabled)
+            ? $this->enabled
+            : $subject instanceof WorkspaceSubject
+                || $this->mapping !== null
+                || $this->configuredUserUsesWorkspaces();
+
+        if ($enabled) {
+            KinshipModels::workspace();
         }
 
-        if ($subject instanceof WorkspaceSubject) {
-            return true;
-        }
-
-        return $this->mapping !== null || $this->configuredUserUsesWorkspaces();
+        return $enabled;
     }
 
     public function subjectForeignKey(): string
     {
-        return $this->mapping === null
-            ? $this->defaultSubjectForeignKey
-            : $this->mapping->subjectForeignKey;
+        return $this->mapping !== null ? $this->mapping->subjectForeignKey : $this->defaultSubjectForeignKey;
     }
 
     public function roleForeignKey(): string
     {
-        return $this->mapping === null
-            ? $this->defaultRoleForeignKey
-            : $this->mapping->roleForeignKey;
+        return $this->mapping !== null ? $this->mapping->roleForeignKey : $this->defaultRoleForeignKey;
     }
 
-    /**
-     * Convert an application identifier into Kinship's stable storage format.
-     * A null return value means a workspace-aware subject has no usable context
-     * and authorization must fail closed.
-     */
+    public function groupForeignKey(): string
+    {
+        return $this->mapping !== null ? $this->mapping->groupForeignKey : $this->defaultGroupForeignKey;
+    }
+
+    public function workspaceOwnerKey(): string
+    {
+        if ($this->mapping !== null) {
+            return $this->mapping->workspaceOwnerKey;
+        }
+
+        $workspace = KinshipModels::workspace();
+
+        return (new $workspace)->getKeyName();
+    }
+
     public function scopeValue(int|string|null $identifier, bool $workspaceEnabled): ?string
     {
         if (! $workspaceEnabled) {
@@ -107,45 +121,32 @@ final readonly class WorkspaceConfiguration
     }
 
     /** @param array<string, mixed> $raw */
-    private static function mappingFrom(array $raw, string $defaultRoleKey): ?WorkspaceMapping
-    {
-        $intent = array_filter([
-            $raw['model'] ?? null,
-            $raw['relationship'] ?? null,
-            $raw['subject_foreign_key'] ?? null,
-        ], fn (mixed $value): bool => is_string($value) && $value !== '');
+    private static function mappingFrom(
+        array $raw,
+        string $defaultSubjectKey,
+        string $defaultRoleKey,
+        string $defaultGroupKey,
+    ): ?WorkspaceMapping {
+        $relationship = self::optionalString($raw['relationship'] ?? null, 'workspace.mapping.relationship');
+        $subjectKey = self::optionalString($raw['subject_foreign_key'] ?? null, 'workspace.mapping.subject_foreign_key');
+        $ownerKey = self::optionalString($raw['workspace_owner_key'] ?? null, 'workspace.mapping.workspace_owner_key');
+        $roleKey = self::optionalString($raw['role_foreign_key'] ?? null, 'workspace.mapping.role_foreign_key');
+        $groupKey = self::optionalString($raw['group_foreign_key'] ?? null, 'workspace.mapping.group_foreign_key');
 
-        if ($intent === []) {
+        if ($relationship === null && $subjectKey === null && $ownerKey === null && $roleKey === null && $groupKey === null) {
             return null;
         }
 
-        $values = [
-            'model' => $raw['model'] ?? null,
-            'relationship' => $raw['relationship'] ?? null,
-            'subject_foreign_key' => $raw['subject_foreign_key'] ?? null,
-            'workspace_owner_key' => $raw['workspace_owner_key'] ?? 'id',
-            'role_foreign_key' => $raw['role_foreign_key'] ?? $defaultRoleKey,
-        ];
-
-        foreach ($values as $key => $value) {
-            if (! is_string($value) || $value === '') {
-                throw new RuntimeException("Kinship workspace mapping requires [{$key}].");
-            }
-        }
-
-        if (! is_a($values['model'], Model::class, true)) {
-            throw new RuntimeException('The Kinship workspace mapping model must extend '.Model::class.'.');
-        }
-
-        /** @var class-string<Model> $model */
-        $model = $values['model'];
+        $model = KinshipModels::workspace();
+        $ownerKey ??= (new $model)->getKeyName();
 
         return new WorkspaceMapping(
             $model,
-            $values['relationship'],
-            $values['subject_foreign_key'],
-            $values['workspace_owner_key'],
-            $values['role_foreign_key'],
+            $relationship,
+            $subjectKey ?? $defaultSubjectKey,
+            $ownerKey,
+            $roleKey ?? $defaultRoleKey,
+            $groupKey ?? $defaultGroupKey,
         );
     }
 
@@ -153,6 +154,19 @@ final readonly class WorkspaceConfiguration
     {
         if (! is_string($value) || $value === '') {
             throw new RuntimeException("Kinship {$key} must be a non-empty string.");
+        }
+
+        return $value;
+    }
+
+    private static function optionalString(mixed $value, string $key): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (! is_string($value)) {
+            throw new RuntimeException("Kinship {$key} must be null or a non-empty string.");
         }
 
         return $value;
