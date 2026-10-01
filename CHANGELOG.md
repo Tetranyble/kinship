@@ -7,6 +7,8 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## [2.0.0] - 2026-10-01
+
 ### Added
 
 - Added tenant-scoped IAM groups. Users may belong to multiple groups and inherit both group roles and direct group permissions inside the active workspace.
