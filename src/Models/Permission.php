@@ -2,11 +2,13 @@
 
 namespace Tetranyble\Kinship\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Tetranyble\Kinship\Cache\PermissionCacheInvalidator;
 use Tetranyble\Kinship\Contracts\Group as GroupContract;
+use Tetranyble\Kinship\Database\Factories\PermissionFactory;
 use Tetranyble\Kinship\Models\Pivots\GroupPermission;
 use Tetranyble\Kinship\Models\Pivots\PermissionRole;
 use Tetranyble\Kinship\Support\KinshipModels;
@@ -15,7 +17,15 @@ use Tetranyble\Kinship\Support\WorkspaceConfiguration;
 /** @property string $name */
 class Permission extends Model
 {
+    /** @use HasFactory<PermissionFactory> */
+    use HasFactory;
+
     use SoftDeletes;
+
+    protected static function newFactory(): PermissionFactory
+    {
+        return PermissionFactory::new();
+    }
 
     protected static function booted(): void
     {

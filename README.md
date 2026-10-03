@@ -59,6 +59,22 @@ php artisan vendor:publish --tag=kinship-migrations
 
 Set `kinship.migrations.load` to `false` after publishing migrations so there is one migration owner.
 
+## Model factories
+
+The package models expose namespaced factories directly to consuming applications:
+
+```php
+use Tetranyble\Kinship\Models\Group;
+use Tetranyble\Kinship\Models\Permission;
+use Tetranyble\Kinship\Models\Role;
+
+$permission = Permission::factory()->create();
+$role = Role::factory()->forWorkspace($workspace)->system()->create();
+$group = Group::factory()->forWorkspace($workspace->getKey())->create();
+```
+
+`forWorkspace()` accepts a Kinship `Workspace` contract or an integer/string workspace identifier. Roles and groups use the configured workspace column and default to Kinship's global scope when the state is omitted. As with Laravel application factories, Faker must be installed in the consuming application's development dependencies.
+
 ## Opt-in permission catalog
 
 Kinship never seeds authorization data during installation, migration, or application boot. The catalog is disabled by default, and application-model discovery has a separate disabled-by-default switch. To use the supplied starter matrix, publish the configuration and explicitly enable it:

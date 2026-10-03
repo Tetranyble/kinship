@@ -34,7 +34,8 @@
     },
     "autoload": {
         "psr-4": {
-            "Tetranyble\\Kinship\\": "src/"
+            "Tetranyble\\Kinship\\": "src/",
+            "Tetranyble\\Kinship\\Database\\Factories\\": "database/factories/"
         }
     },
     "autoload-dev": {
@@ -62,6 +63,7 @@
     },
     "archive": {
         "exclude": [
+            "/.DS_Store",
             "/.github",
             "/.gitattributes",
             "/.gitignore",

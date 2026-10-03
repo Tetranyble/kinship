@@ -7,6 +7,12 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## [2.0.1] - 2026-10-03
+
+### Added
+
+- Added package-owned factories for the default Role, Permission, and Group models, including workspace and system states for roles and groups.
+
 ## [2.0.0] - 2026-10-01
 
 ### Added

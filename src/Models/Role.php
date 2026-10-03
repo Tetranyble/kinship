@@ -4,6 +4,7 @@ namespace Tetranyble\Kinship\Models;
 
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -11,6 +12,7 @@ use Illuminate\Support\Collection;
 use RuntimeException;
 use Tetranyble\Kinship\Cache\PermissionCacheInvalidator;
 use Tetranyble\Kinship\Contracts\Group as GroupContract;
+use Tetranyble\Kinship\Database\Factories\RoleFactory;
 use Tetranyble\Kinship\Models\Pivots\GroupRole;
 use Tetranyble\Kinship\Models\Pivots\PermissionRole;
 use Tetranyble\Kinship\Models\Pivots\RoleUser;
@@ -24,7 +26,15 @@ use Tetranyble\Kinship\Support\WorkspaceConfiguration;
  */
 class Role extends Model
 {
+    /** @use HasFactory<RoleFactory> */
+    use HasFactory;
+
     use SoftDeletes;
+
+    protected static function newFactory(): RoleFactory
+    {
+        return RoleFactory::new();
+    }
 
     protected static function booted(): void
     {

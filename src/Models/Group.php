@@ -2,10 +2,12 @@
 
 namespace Tetranyble\Kinship\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Tetranyble\Kinship\Concerns\IsGroup;
 use Tetranyble\Kinship\Contracts\Group as GroupContract;
+use Tetranyble\Kinship\Database\Factories\GroupFactory;
 use Tetranyble\Kinship\Support\WorkspaceConfiguration;
 
 /**
@@ -15,6 +17,9 @@ use Tetranyble\Kinship\Support\WorkspaceConfiguration;
  */
 class Group extends Model implements GroupContract
 {
+    /** @use HasFactory<GroupFactory> */
+    use HasFactory;
+
     use IsGroup;
     use SoftDeletes;
 
@@ -29,6 +34,11 @@ class Group extends Model implements GroupContract
     protected $casts = [
         'is_system' => 'boolean',
     ];
+
+    protected static function newFactory(): GroupFactory
+    {
+        return GroupFactory::new();
+    }
 
     public function getTable(): string
     {
